@@ -66,7 +66,7 @@ function render() {
   $("test-history").innerHTML = events.length ? events.map(e => `<div class="history-row"><span class="mono muted">${esc(stamp(e.time * 1000))}</span><strong>${esc(e.model)}</strong><span class="pill ${e.ok ? "green" : "red"}">${e.ok ? "成功" : "失败"}</span><span class="mono">${e.seconds}s</span></div>`).join("") : '<p class="history-empty">暂无测试记录，发送第一条测试消息。</p>';
 }
 function renderDashboard() {
-  const {accounts, metrics:m = {}, pool} = overview;
+  const {accounts, metrics:m = {}, pool, models} = overview;
   const fmt = value => Number(value).toLocaleString("zh-CN",{maximumFractionDigits:2});
   const rate = value => value === null || value === undefined ? "—" : value.toFixed(1) + "%";
   $("dash-available").textContent = accounts.filter(a=>a.pool_state === "available").length + " / " + accounts.length;
@@ -80,6 +80,7 @@ function renderDashboard() {
   $("dash-latency").textContent = m.avg_duration_ms === null || m.avg_duration_ms === undefined ? "—" : fmt(m.avg_duration_ms) + " ms";
   $("dash-since").textContent = "统计开始于 " + stamp((m.started_at || 0)*1000);
   $("dash-routing").textContent = pool?.routing === "round_robin" ? "轮流分配请求，自动跳过不可用账号" : "手动指定账号模式";
+  $("dash-models-count").textContent = models ? models.length + " 个可用模型" : "—";
   const states={available:"可用",paused:"已暂停",cooling:"冷却中",exhausted:"积分耗尽",invalid:"凭据异常"};
   $("dash-account-list").innerHTML = accounts.slice(0,8).map(a=>`<div class="dashboard-account"><span class="account-icon">${esc(a.name.slice(0,1))}</span><div><strong>${esc(a.name)}</strong><small class="cell-note">${esc(a.uid || a.nickname)}</small></div><div class="dashboard-account-credit"><strong>${a.remaining === null || a.remaining === undefined ? "待查询" : fmt(a.remaining)}</strong><small class="cell-note">积分</small></div><span class="pill ${a.pool_state === 'available' ? 'green' : 'amber'}">${states[a.pool_state] || '待查询'}</span></div>`).join("") || '<p class="history-empty">尚未添加账号，点击“添加账号”开始。</p>';
   if(accounts.length > 8) $("dash-account-list").insertAdjacentHTML("beforeend",'<p class="muted">更多账号请前往账号池查看。</p>');

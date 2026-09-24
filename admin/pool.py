@@ -61,11 +61,6 @@ class AccountPool:
         self.cursor = 0
         self.jobs = asyncio.Lock()
         self.last_sync = 0
-        with store.lock:
-            store.data.setdefault("pool", {"routing": "round_robin", "auto_checkin": True, "checkin_time": "09:00"})
-            store.data.setdefault("account_status", {})
-            store.data.setdefault("session_bindings", {})
-            store.save()
 
     def operation_lock(self, aid):
         with self.store.lock:
@@ -145,6 +140,37 @@ class AccountPool:
             elif status in (402, 429):
                 data.update(cooldown_until=self.clock() + 1800, last_error="上游额度或频率限制，已冷却 30 分钟")
             self.store.save()
+
+    def balance_refresh(self, aid):
+        with self.store.lock:
+            if aid not in self.store.data["accounts"]:
+                return
+            item = self.store.data["accounts"][aid]
+        status = self.store.data["account_status"].get(aid, {})
+        if status.get("cooldown_until", 0) > self.clock():
+            return
+        state = self.state(self.store.account_rows()[list(self.store.data["accounts"].keys()).index(aid)])
+        if state not in ("available", "cooling"):
+            return
+        manager = self.store.manager_for(aid, item)
+        try:
+            headers = manager.get_headers()
+        except Exception:
+            self.update(aid, cooldown_until=self.clock() + 300)
+            return
+        domain = str(headers.get("X-Domain", "")).lower()
+        version = "intl" if "workbuddy.ai" in domain or "copilot.workbuddy" in domain else "cn"
+        with self.client_factory() as client:
+            try:
+                data = self.credits(client, headers, version)
+                self.update(aid, **data, credits_updated=int(self.clock()), auth_invalid=False, last_error=None)
+                self.update(aid, last_balance_refresh=int(self.clock()))
+            except BillingError as e:
+                self.update(aid, last_error=str(e))
+                if e.status in (401, 403):
+                    self.update(aid, cooldown_until=self.clock() + 300)
+            except Exception:
+                pass
 
     def billing(self, client, headers, path, body=None, version="cn"):
         base = BILLING_INTL if version == "intl" else BILLING_CN
@@ -289,12 +315,17 @@ def request_affinity(headers, body):
     if not isinstance(body, dict):
         return None
     identity = None
-    for name in (b"x-session-id", b"session_id", b"x-conversation-id"):
-        if headers.get(name):
-            identity = [name.decode(), headers[name].decode(errors="replace")]
+    for name in ("conversation_id",):
+        if body.get(name):
+            identity = [name, body[name]]
             break
     if identity is None:
-        for name in ("prompt_cache_key", "conversation_id", "session_id"):
+        for name in (b"x-session-id", b"session_id", b"x-conversation-id"):
+            if headers.get(name):
+                identity = [name.decode(), headers[name].decode(errors="replace")]
+                break
+    if identity is None:
+        for name in ("prompt_cache_key", "session_id"):
             if body.get(name):
                 identity = [name, body[name]]
                 break

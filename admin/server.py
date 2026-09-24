@@ -68,17 +68,23 @@ class Store:
             self.data = json.loads(self.path.read_text(encoding="utf-8"))
         else:
             self.data = {"accounts": {}, "active": None, "keys": {}}
-            for p in sorted(self.auth_dir.glob("*.info")):
-                try:
-                    doc = json.loads(p.read_text(encoding="utf-8"))
-                    self.validate_credential(doc)
-                except (ValueError, OSError, HTTPException):
-                    continue
-                aid = secrets.token_hex(8)
-                name = str(doc.get("account", {}).get("nickname") or "已迁移账号")[:60]
-                self.data["accounts"][aid] = {"name": name, "file": p.name, "enabled": not bool(doc.get("disabled")), "created": int(time.time())}
-                if self.data["active"] is None and not doc.get("disabled"):
-                    self.data["active"] = aid
+        with self.lock:
+            self.data.setdefault("pool", {"routing": "round_robin", "auto_checkin": True, "checkin_time": "09:00"})
+            self.data.setdefault("account_status", {})
+            self.data.setdefault("session_bindings", {})
+        if not self.path.exists():
+            self.save()
+        for p in sorted(self.auth_dir.glob("*.info")):
+            try:
+                doc = json.loads(p.read_text(encoding="utf-8"))
+                self.validate_credential(doc)
+            except (ValueError, OSError, HTTPException):
+                continue
+            aid = secrets.token_hex(8)
+            name = str(doc.get("account", {}).get("nickname") or "已迁移账号")[:60]
+            self.data["accounts"][aid] = {"name": name, "file": p.name, "enabled": not bool(doc.get("disabled")), "created": int(time.time())}
+            if self.data["active"] is None and not doc.get("disabled"):
+                self.data["active"] = aid
             if initial_key:
                 self.add_key("原有 API Key", initial_key)
             self.save()
@@ -136,7 +142,7 @@ class Store:
                 raise HTTPException(400, "最多保存 100 个账号")
             aid = secrets.token_hex(8)
             write_json(self.auth_dir / (aid + ".info"), doc)
-            self.data["accounts"][aid] = {"file": aid + ".info", "name": name or str(doc["account"].get("nickname") or "浏览器授权账号")[:60], "created": int(time.time()), "enabled": True}
+            self.data["accounts"][aid] = {"file": aid + ".info", "name": name or str(doc["account"].get("nickname") or "浏览器授权账号"), "created": int(time.time()), "enabled": True}
             if self.data["active"] is None:
                 self.data["active"] = aid
             self.save()
