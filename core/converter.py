@@ -31,8 +31,9 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 try:
     from .desensitize import desensitize_body
@@ -64,7 +65,7 @@ from .system_identity import filter_system_identity
 # 常量
 # ---------------------------------------------------------------------------
 
-BACKEND = "https://copilot.tencent.com"
+BACKEND = os.environ.get("CODEBUDDY_UPSTREAM_URL", "https://copilot.tencent.com")
 DEFAULT_DOMAIN = "www.codebuddy.cn"
 USER_AGENT = "codebuddy2openai/2.0"
 
@@ -412,6 +413,72 @@ PASSTHROUGH_BODY_KEYS = {
 }
 
 # ---------------------------------------------------------------------------
+# 请求验证模型（Pydantic）
+# ---------------------------------------------------------------------------
+
+
+class ChatCompletionsRequest(BaseModel):
+    model: str = "auto"
+    messages: list[dict] = Field(..., min_length=1)
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+    temperature: float | None = Field(None, ge=0, le=2)
+    max_tokens: int | None = Field(None, gt=0)
+    max_completion_tokens: int | None = Field(None, gt=0)
+    top_p: float | None = Field(None, ge=0, le=1)
+    stream: bool = False
+    stream_options: dict | None = None
+    stop: str | list[str] | None = None
+    presence_penalty: float | None = Field(None, ge=-2, le=2)
+    frequency_penalty: float | None = Field(None, ge=-2, le=2)
+    n: int | None = Field(None, gt=0)
+    response_format: str | dict | None = None
+    seed: int | None = Field(None, ge=0)
+    user: str | None = None
+    reasoning_effort: str | None = None
+    verbosity: str | None = None
+    reasoning_summary: str | None = None
+
+
+class ResponsesRequest(BaseModel):
+    model: str = "auto"
+    input: str | list[dict] = Field(...)
+    instructions: str | None = None
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+    max_output_tokens: int | None = Field(None, gt=0)
+    temperature: float | None = Field(None, ge=0, le=2)
+    top_p: float | None = Field(None, ge=0, le=1)
+    stream: bool = False
+    stream_options: dict | None = None
+    stop: str | list[str] | None = None
+    parallel_tool_calls: bool | None = None
+    user: str | None = None
+
+
+class CountTokensRequest(BaseModel):
+    model: str = "auto"
+    messages: list[dict] = Field(..., min_length=1)
+    system: str | list[dict] | None = None
+    tools: list[dict] | None = None
+    metadata: dict | None = None
+
+
+class MessagesRequest(BaseModel):
+    model: str = "auto"
+    max_tokens: int = Field(..., gt=0)
+    messages: list[dict] = Field(..., min_length=1)
+    system: str | list[dict] | None = None
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+    temperature: float | None = Field(None, ge=0, le=2)
+    top_p: float | None = Field(None, ge=0, le=1)
+    stream: bool = False
+    stop_sequences: list[str] | None = None
+    metadata: dict | None = None
+
+
+# ---------------------------------------------------------------------------
 # FastAPI 应用
 # ---------------------------------------------------------------------------
 
@@ -523,23 +590,13 @@ def list_models(
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
-    request: Request,
+    request: ChatCompletionsRequest,
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
 ):
     _check_auth(authorization, x_api_key)
     cred = _cred()
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {"message": f"bad json: {e}", "type": "invalid_request_error"}
-            },
-        )
-
+    payload = request.model_dump(exclude_none=True)
     messages = payload.get("messages") or []
     if not messages:
         raise HTTPException(
@@ -955,7 +1012,7 @@ async def _post_backend_with_filter_retry(
 
 @app.post("/v1/responses")
 async def create_response(
-    request: Request,
+    request: ResponsesRequest,
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
 ):
@@ -967,16 +1024,7 @@ async def create_response(
     """
     _check_auth(authorization, x_api_key)
     cred = _cred()
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {"message": f"bad json: {e}", "type": "invalid_request_error"}
-            },
-        )
+    payload = request.model_dump(exclude_none=True)
 
     # 转换请求：Responses → Chat
     try:
@@ -1126,7 +1174,7 @@ async def _stream_responses(
 
 @app.post("/v1/messages")
 async def create_message(
-    request: Request,
+    request: MessagesRequest,
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
 ):
@@ -1138,16 +1186,7 @@ async def create_message(
     """
     _check_auth(authorization, x_api_key)
     cred = _cred()
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {"message": f"bad json: {e}", "type": "invalid_request_error"}
-            },
-        )
+    payload = request.model_dump(exclude_none=True)
 
     # 将 Anthropic 格式消息、工具规范在进入后端前统一转换为 OpenAI Chat 格式。
     messages = payload.get("messages") or []
@@ -1324,7 +1363,7 @@ async def _stream_anthropic(
 
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(
-    request: Request,
+    request: CountTokensRequest,
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),
 ):
@@ -1335,16 +1374,7 @@ async def count_tokens(
     """
     _check_auth(authorization, x_api_key)
     cred = _cred()
-
-    try:
-        payload = await request.json()
-    except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {"message": f"bad json: {e}", "type": "invalid_request_error"}
-            },
-        )
+    payload = request.model_dump(exclude_none=True)
 
     messages = payload.get("messages") or []
     if not messages:
