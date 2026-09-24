@@ -8,7 +8,8 @@ const labels = {
   accounts: ["账号池", "ACCOUNT POOL", "集中管理登录凭据、积分与可用状态，让请求自动分配到可用账号。"],
   keys: ["API 密钥", "CLIENT ACCESS", "为每个客户端分配独立密钥，让连接清晰可控。"],
   test: ["连接测试", "CONNECTION LAB", "从当前账号发起请求，确认模型能否正常响应。"],
-  guide: ["接入指南", "GET CONNECTED", "从导入凭据到客户端接入，只需几步。"]
+  guide: ["接入指南", "GET CONNECTED", "从导入凭据到客户端接入，只需几步。"],
+  tasks: ["任务中心", "TASK HUB", "查看和管理所有后台请求任务。"]
 };
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const stamp = ts => ts ? new Date(ts).toLocaleString("zh-CN", {hour12:false}) : "未提供";
@@ -64,6 +65,7 @@ function render() {
   if (models.includes(selected)) $("model").value = selected;
   $("test-submit").disabled = !active || busy;
   $("test-history").innerHTML = events.length ? events.map(e => `<div class="history-row"><span class="mono muted">${esc(stamp(e.time * 1000))}</span><strong>${esc(e.model)}</strong><span class="pill ${e.ok ? "green" : "red"}">${e.ok ? "成功" : "失败"}</span><span class="mono">${e.seconds}s</span></div>`).join("") : '<p class="history-empty">暂无测试记录，发送第一条测试消息。</p>';
+  renderTasks();
 }
 function renderDashboard() {
   const {accounts, metrics:m = {}, pool, models} = overview;
@@ -102,6 +104,20 @@ function renderAccounts() {
     return `<tr><td><div class="account-cell"><span class="account-icon">${esc(a.name.slice(0,1))}</span><div><strong>${esc(a.name)}${a.active ? '<span class="mini-active">手动 / 测试账号</span>' : ""}</strong><small>${esc(a.uid || a.nickname)}</small></div></div></td><td><span class="pill ${status[1]}">${status[0]}</span><small class="cell-note">${a.today_checked_in ? "今日已签到" : "今日未确认签到"}</small>${a.cooldown_until > Date.now()/1000 ? `<small class="cell-note">至 ${esc(stamp(a.cooldown_until*1000))}</small>` : ""}</td><td><strong class="credit-number">${credits}</strong><small class="cell-note">${a.credits_updated ? esc(stamp(a.credits_updated*1000)) : "点击查询积分"}${a.credits_stale && a.credits_updated ? " · 待刷新" : ""}</small>${a.last_error ? `<small class="cell-note field-error">${esc(a.last_error)}</small>` : ""}</td><td class="mono">${esc(stamp(a.expires_at))}<small class="cell-note">${a.expired ? "已到期 · 调用时尝试刷新" : "支持自动刷新"}</small></td><td><div class="actions pool-actions">${a.enabled ? `<button data-action="status" data-id="${a.id}" title="查询积分与签到状态">查询积分</button><button data-action="checkin" data-id="${a.id}">签到</button><button data-action="refresh" data-id="${a.id}">刷新凭据</button>` : ""}${a.enabled && !a.active ? `<button class="switch" data-action="activate" data-id="${a.id}">设为手动 / 测试</button>` : ""}<button data-action="rename" data-id="${a.id}">备注</button><button data-action="toggle" data-id="${a.id}">${a.enabled ? "暂停" : "恢复"}</button><button class="danger" data-action="delete" data-id="${a.id}">删除</button></div></td></tr>`;
   }).join("") || (overview.accounts.length ? '<tr><td colspan="5" class="muted">没有符合筛选条件的账号。</td></tr>' : "");
 }
+function renderTasks() {
+  const {tasks:tasks=[], total=0} = overview || {};
+  $("tasks-count").textContent = `${total} 个任务`;
+  $("tasks-body").innerHTML = tasks.map(t => {
+    const statusClass = t.status === "success" ? "green" : t.status === "failed" ? "red" : "amber";
+    return `<tr><td class="mono muted">${esc(stamp(t.time * 1000))}</td><td>${esc(t.type)}<br><small class="cell-note">${esc(t.detail || "")}</small></td><td><small>${esc(t.account || "—")}</small></td><td><span class="pill ${statusClass}">${t.status === "success" ? "成功" : t.status === "failed" ? "失败" : "进行中"}</span></td><td class="align-right mono">${Number(t.duration_ms || 0).toLocaleString("zh-CN")} ms</td><td class="align-right"></td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="history-empty">暂无任务记录。</td></tr>';
+  const completed = tasks.filter(t=>t.type==="签到"&&t.status==="success").length;
+  const failed = tasks.filter(t=>t.status==="failed").length;
+  $("tasks-completed").textContent = completed;
+  $("tasks-checkedin").textContent = tasks.filter(t=>t.type==="签到").length;
+  $("tasks-failed").textContent = failed;
+  $("tasks-empty").hidden = tasks.length > 0;
+}
 $("account-search").addEventListener("input", () => { if(overview) renderAccounts(); });
 $("account-filter").addEventListener("change", () => { if(overview) renderAccounts(); });
 async function refresh() {
@@ -130,7 +146,7 @@ async function batchAction(action) {
 $("refresh").addEventListener("click", () => page === "accounts" ? batchAction("status") : refresh().catch(e=>toast(e.message)));
 $("batch-checkin").addEventListener("click", () => batchAction("checkin"));
 $("pool-settings").addEventListener("submit", async e => { e.preventDefault();e.submitter.disabled=true;try {await api("pool/settings",{method:"PATCH",body:{routing:$("pool-routing").value,auto_checkin:$("auto-checkin").checked,checkin_time:$("checkin-time").value}});await refresh();toast("账号池设置已保存");}catch(err){toast(err.message);}finally{e.submitter.disabled=false;} });
-setInterval(() => { if(csrf && overview && !document.hidden && !document.querySelector("dialog[open]") && !$("refresh").disabled) refresh().catch(()=>{}); },30000);
+setInterval(() => { if(csrf && overview && !document.hidden && !document.querySelector("dialog[open]") && !$("refresh").disabled) { refresh().catch(()=>{}); renderTasks(); } },30000);
 document.querySelectorAll("[data-page]").forEach(b => b.addEventListener("click", () => goPage(b.dataset.page)));
 $("go-guide").addEventListener("click", () => goPage("guide"));
 document.querySelectorAll(".close-dialog").forEach(b => b.addEventListener("click", () => b.closest("dialog").close()));
