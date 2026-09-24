@@ -230,9 +230,12 @@ class AdminMiddleware:
         async def secure_send(message):
             if message["type"] == "http.response.start":
                 message["headers"] = list(message.get("headers", [])) + [
-                    (b"cache-control", b"no-store"), (b"x-content-type-options", b"nosniff"),
-                    (b"referrer-policy", b"no-referrer"), (b"x-frame-options", b"DENY"),
-                    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"),
+                    (b"cache-control", b"no-store"),
+                    (b"x-content-type-options", b"nosniff"),
+                    (b"referrer-policy", b"no-referrer"),
+                    (b"x-frame-options", b"DENY"),
+                    (b"x-xss-protection", b"1; mode=block"),
+                    (b"content-security-policy", b"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"),
                 ]
             await send(message)
         await self.app(scope, replay, secure_send)
@@ -260,11 +263,20 @@ def create_app(root=None, auth_dir=None, initial_key=None, admin_key=None, secur
                     pass  # Per-account errors are persisted without credential data.
                 await asyncio.sleep(60)
         pool_task = asyncio.create_task(pool_worker())
+        async def balance_refresh_worker():
+            while True:
+                try:
+                    await pool.refresh_all_balances()
+                except Exception:
+                    pass
+                await asyncio.sleep(600)
+        balance_refresh_task = asyncio.create_task(balance_refresh_worker())
         try:
             yield
         finally:
             cleanup_task.cancel()
             pool_task.cancel()
+            balance_refresh_task.cancel()
             try:
                 await cleanup_task
             except asyncio.CancelledError:
@@ -272,6 +284,10 @@ def create_app(root=None, auth_dir=None, initial_key=None, admin_key=None, secur
             await browser_login.close()
             try:
                 await pool_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await balance_refresh_task
             except asyncio.CancelledError:
                 pass
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -323,13 +339,20 @@ def create_app(root=None, auth_dir=None, initial_key=None, admin_key=None, secur
         with store.lock:
             store.attempts = {k: v for k, v in store.attempts.items() if v[-1] > now - 600}
             failures = [t for t in store.attempts.get(ip, []) if t > now - 600]
+            locked_until = store.attempts.get(ip + "_locked", 0)
+            if locked_until > now:
+                raise HTTPException(429, f"尝试次数过多，请 {int(locked_until - now)} 秒后重试")
             if len(failures) >= 8:
+                store.attempts[ip + "_locked"] = now + 600
+                store.save()
                 raise HTTPException(429, "尝试次数过多，请 10 分钟后重试")
             value = body.get("key")
             if not isinstance(value, str) or not hmac.compare_digest(digest(value), store.admin_digest):
                 store.attempts[ip] = failures + [now]
+                store.save()
                 raise HTTPException(401, "管理密钥不正确")
             store.attempts.pop(ip, None)
+            store.attempts.pop(ip + "_locked", None)
             store.sessions = {k: v for k, v in store.sessions.items() if v["expires"] > now}
             sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             if len(store.sessions) >= 100:

@@ -172,6 +172,13 @@ class AccountPool:
             except Exception:
                 pass
 
+    async def refresh_all_balances(self):
+        with self.store.lock:
+            aids = [aid for aid, item in self.store.data["accounts"].items() if item["enabled"]]
+        for aid in aids:
+            self.balance_refresh(aid)
+            await asyncio.sleep(0.5)
+
     def billing(self, client, headers, path, body=None, version="cn"):
         base = BILLING_INTL if version == "intl" else BILLING_CN
         response = client.post(base + path, headers=headers, json=body or {})

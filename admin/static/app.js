@@ -72,7 +72,8 @@ function renderDashboard() {
   $("dash-available").textContent = accounts.filter(a=>a.pool_state === "available").length + " / " + accounts.length;
   const known = accounts.filter(a=>typeof a.remaining === "number");
   $("dash-credits").textContent = known.length ? fmt(known.reduce((s,a)=>s+a.remaining,0)) : "—";
-  $("dash-credit-note").textContent = known.length < accounts.length ? `已查询 ${known.length}/${accounts.length} 个账号，余额可能不完整` : accounts.some(a=>a.credits_stale) ? "包含待刷新余额，以最近一次查询为准" : "以最近一次上游查询为准";
+  $("dash-credit-note").textContent = known.length < accounts.length ? `已查询 ${known.length}/${accounts.length} 个账号，余额可能不完整` : accounts.some(a=>a.credits_stale && a.credits_updated) ? "包含待刷新余额，以最近一次查询为准" : "以最近一次上游查询为准";
+  $("dash-credit-refresh").textContent = accounts.some(a=>a.credits_stale && a.credits_updated) ? " ● 需刷新" : "";
   $("dash-requests").textContent = fmt(m.completed || 0);
   $("dash-request-note").textContent = `API ${m.api_count || 0} · 后台测试 ${m.test_count || 0}`;
   $("dash-success").textContent = rate(m.success_rate); $("dash-http").textContent = rate(m.http_success_rate);
