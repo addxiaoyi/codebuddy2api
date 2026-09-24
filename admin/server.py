@@ -167,9 +167,10 @@ class Store:
             try:
                 doc = json.loads(self.file_for(item).read_text(encoding="utf-8"))
                 expiry = doc["auth"].get("expiresAt", 0)
-                row.update({"nickname": str(doc["account"].get("nickname") or ""), "uid": str(doc["account"].get("uid") or ""), "expires_at": expiry, "expired": expiry < time.time() * 1000, "refresh_available": bool(doc["auth"].get("refreshToken")), "status": "ready"})
+                version = doc.get("version", "cn")
+                row.update({"nickname": str(doc["account"].get("nickname") or ""), "uid": str(doc["account"].get("uid") or ""), "expires_at": expiry, "expired": expiry < time.time() * 1000, "refresh_available": bool(doc["auth"].get("refreshToken")), "status": "ready", "version": version})
             except (ValueError, OSError, KeyError):
-                row.update({"status": "invalid", "expired": True, "expires_at": 0, "refresh_available": False})
+                row.update({"status": "invalid", "expired": True, "expires_at": 0, "refresh_available": False, "version": "cn"})
             result.append(row)
         return result
 
@@ -351,8 +352,11 @@ def create_app(root=None, auth_dir=None, initial_key=None, admin_key=None, secur
         store.require_admin(req)
         body = await payload(req)
         name = clean_name(body.get("name"), None)
+        version = body.get("version", "cn")
+        if version not in ("cn", "intl"):
+            raise HTTPException(400, "版本参数无效，仅支持 cn 和 intl")
         try:
-            return await browser_login.start(digest(req.cookies.get(COOKIE, "")), name)
+            return await browser_login.start(digest(req.cookies.get(COOKIE, "")), name, version)
         except (httpx.HTTPError, ValueError, TypeError):
             raise HTTPException(502, "授权服务连接失败，请稍后重试")
 

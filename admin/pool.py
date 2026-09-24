@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 import threading
 import time
 from contextvars import ContextVar
@@ -15,7 +16,8 @@ from fastapi.responses import JSONResponse
 
 REQUEST_CREDENTIAL = ContextVar("pool_credential", default=None)
 CN = timezone(timedelta(hours=8))
-BILLING = "https://www.codebuddy.cn/v2/billing/meter/"
+BILLING_CN = "https://www.codebuddy.cn/v2/billing/meter/"
+BILLING_INTL = os.environ.get("WORKBuddy_BILLING_INTL_URL", "https://api.workbuddy.ai/v2/billing/meter/")
 
 
 def number(value):
@@ -98,11 +100,12 @@ class AccountPool:
         today = datetime.fromtimestamp(self.clock(), CN).strftime("%Y-%m-%d")
         for row in rows:
             status = self.store.data["account_status"].get(row["id"], {})
+            version = row.get("version", "cn")
             row.update({"pool_state": self.state(row), "remaining": status.get("remaining"), "credits_updated": status.get("credits_updated"),
                         "credits_stale": status.get("credits_updated", 0) < self.clock() - 600,
                         "today_checked_in": status.get("checkin_date") == today, "cooldown_until": status.get("cooldown_until", 0),
                         "last_error": status.get("last_error"), "token_refreshed": status.get("token_refreshed"),
-                        "request_count": status.get("request_count", 0)})
+                        "request_count": status.get("request_count", 0), "version": version})
         return rows
 
     def select(self, affinity_key=None):
@@ -143,8 +146,9 @@ class AccountPool:
                 data.update(cooldown_until=self.clock() + 1800, last_error="上游额度或频率限制，已冷却 30 分钟")
             self.store.save()
 
-    def billing(self, client, headers, path, body=None):
-        response = client.post(BILLING + path, headers=headers, json=body or {})
+    def billing(self, client, headers, path, body=None, version="cn"):
+        base = BILLING_INTL if version == "intl" else BILLING_CN
+        response = client.post(base + path, headers=headers, json=body or {})
         if response.status_code != 200:
             raise BillingError("积分服务请求失败", response.status_code)
         try:
@@ -155,11 +159,11 @@ class AccountPool:
             raise BillingError("上游未接受该操作，请检查账号或稍后重试", code=d.get("code") if isinstance(d, dict) else None)
         return d.get("data")
 
-    def credits(self, client, headers):
+    def credits(self, client, headers, version="cn"):
         packages = []
         now = datetime.fromtimestamp(self.clock(), CN)
         for page in range(1, 101):
-            d = self.billing(client, headers, "get-user-resource", {"PageNumber": page, "PageSize": 100, "ProductCode": "p_tcaca", "Status": [0, 3], "PackageEndTimeRangeBegin": now.strftime("%Y-%m-%d %H:%M:%S"), "PackageEndTimeRangeEnd": "2126-01-01 00:00:00"})
+            d = self.billing(client, headers, "get-user-resource", {"PageNumber": page, "PageSize": 100, "ProductCode": "p_tcaca", "Status": [0, 3], "PackageEndTimeRangeBegin": now.strftime("%Y-%m-%d %H:%M:%S"), "PackageEndTimeRangeEnd": "2126-01-01 00:00:00"}, version)
             try:
                 data = d["Response"]["Data"]
                 current = data["Accounts"]
@@ -175,13 +179,13 @@ class AccountPool:
                 break
         raise BillingError("积分包分页不完整，上次余额已保留")
 
-    def checkin_status(self, client, headers):
+    def checkin_status(self, client, headers, version="cn"):
         try:
-            d = self.billing(client, headers, "checkin-activity-status")
+            d = self.billing(client, headers, "checkin-activity-status", version=version)
         except BillingError as e:
             if e.status not in (404, 405):
                 raise
-            d = self.billing(client, headers, "checkin-status")
+            d = self.billing(client, headers, "checkin-status", version=version)
         if not isinstance(d, dict):
             raise BillingError("签到状态格式异常")
         def flag(snake, camel):
@@ -204,14 +208,15 @@ class AccountPool:
                     self.update(aid, token_refreshed=int(self.clock()), auth_invalid=False, cooldown_until=0, last_error=None)
                     return {"id": aid, "ok": True, "message": "登录凭据已刷新"}
                 headers = manager.get_headers()
-                if "workbuddy.ai" in str(headers.get("X-Domain", "")).lower():
-                    return {"id": aid, "ok": False, "message": "当前仅支持国内账号积分与签到"}
+                # Detect version from the auth domain or stored credential
+                domain = str(headers.get("X-Domain", "")).lower()
+                version = "intl" if "workbuddy.ai" in domain or "copilot.workbuddy" in domain else "cn"
                 today = datetime.fromtimestamp(self.clock(), CN).strftime("%Y-%m-%d")
                 with self.client_factory() as client:
                     message = "积分状态已更新"
                     checkin_error = None
                     try:
-                        ci = self.checkin_status(client, headers)
+                        ci = self.checkin_status(client, headers, version)
                         if ci["checked"]:
                             self.update(aid, checkin_date=today)
                         if action == "checkin":
@@ -220,8 +225,8 @@ class AccountPool:
                             elif not ci["active"]:
                                 message = "当前没有可参与的签到活动"
                             else:
-                                self.billing(client, headers, "daily-checkin")
-                                ci = self.checkin_status(client, headers)
+                                self.billing(client, headers, "daily-checkin", version=version)
+                                ci = self.checkin_status(client, headers, version)
                                 if not ci["checked"]:
                                     raise BillingError("签到已提交，但上游尚未确认；请刷新状态")
                                 self.update(aid, checkin_date=today)
@@ -230,7 +235,7 @@ class AccountPool:
                         if action == "checkin":
                             raise
                         checkin_error = "签到状态暂时无法查询"
-                    data = self.credits(client, headers)
+                    data = self.credits(client, headers, version)
                     # A successful balance lookup is proof of current authentication.
                     self.update(aid, **data, credits_updated=int(self.clock()), auth_invalid=False, last_error=checkin_error)
                     if data["remaining"] > 0 and action == "checkin":

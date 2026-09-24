@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let csrf = "", overview = null, pendingConfirm = null, page = "dashboard", busy = false;
 let accountMode = "browser", oauthFlow = null, oauthTimer = null, oauthGeneration = 0;
+let oauthVersion = "cn";
 const labels = {
   dashboard: ["让每个账号，各尽其用", "WORKBUDDY WORKSPACE", "在这里查看服务运行、账号积分和请求表现。"],
   accounts: ["账号池", "ACCOUNT POOL", "集中管理登录凭据、积分与可用状态，让请求自动分配到可用账号。"],
@@ -140,6 +141,9 @@ function clearOAuth() {
   $("oauth-retry").hidden = true; $("account-name").disabled = false;
   $("oauth-status").textContent = "登录链接 5 分钟内有效。同一账号重新登录会更新凭据。";
   $("oauth-status").className = "banner oauth-status";
+  $("version-cn").classList.add("active"); $("version-cn").setAttribute("aria-pressed", "true");
+  $("version-intl").classList.remove("active"); $("version-intl").setAttribute("aria-pressed", "false");
+  oauthVersion = "cn";
 }
 function setAccountMode(mode) {
   clearOAuth(); accountMode = mode;
@@ -151,8 +155,16 @@ function setAccountMode(mode) {
 }
 $("mode-browser").addEventListener("click", () => setAccountMode("browser"));
 $("mode-file").addEventListener("click", () => setAccountMode("file"));
+$("version-cn").addEventListener("click", () => { oauthVersion = "cn"; $("version-cn").classList.add("active"); $("version-cn").setAttribute("aria-pressed", "true"); $("version-intl").classList.remove("active"); $("version-intl").setAttribute("aria-pressed", "false"); });
+$("version-intl").addEventListener("click", () => { oauthVersion = "intl"; $("version-intl").classList.add("active"); $("version-intl").setAttribute("aria-pressed", "true"); $("version-cn").classList.remove("active"); $("version-cn").setAttribute("aria-pressed", "false"); });
 $("account-dialog").addEventListener("close", () => { clearOAuth(); $("account-form").reset(); $("file-label").textContent = "选择或拖入 .info / .json 文件"; $("account-error").textContent = ""; });
-function openAccount() { setAccountMode("browser"); $("account-dialog").showModal(); }
+function openAccount() {
+  setAccountMode("browser");
+  $("version-cn").classList.add("active"); $("version-cn").setAttribute("aria-pressed", "true");
+  $("version-intl").classList.remove("active"); $("version-intl").setAttribute("aria-pressed", "false");
+  oauthVersion = "cn";
+  $("account-dialog").showModal();
+}
 async function pollOAuth(generation) {
   if (generation !== oauthGeneration || !oauthFlow) return;
   const flow = oauthFlow;
@@ -179,7 +191,7 @@ $("oauth-start").addEventListener("click", async () => {
   $("oauth-start").disabled = true; $("oauth-start").textContent = "正在生成…";
   $("account-error").textContent = "";
   try {
-    const flow = await api("oauth/start", {method:"POST",body:{name:$("account-name").value.trim() || undefined}});
+    const flow = await api("oauth/start", {method:"POST",body:{name:$("account-name").value.trim() || undefined, version: oauthVersion}});
     if (generation !== oauthGeneration) { api("oauth/" + flow.id, {method:"DELETE"}).catch(() => {}); return; }
     oauthFlow = flow; $("oauth-open").href = flow.url; $("oauth-link-box").hidden = false;
     $("oauth-start").textContent = "重新生成链接"; $("account-name").disabled = true;

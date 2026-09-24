@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import httpx
 from fastapi import HTTPException
 
-from admin.browser_login import BASE, BrowserLogin
+from admin.browser_login import BrowserLogin, CN_BASE
 import test_admin_server as admin_tests
 from test_admin_server import credential
 
@@ -21,7 +21,7 @@ class BrowserLoginTests(unittest.IsolatedAsyncioTestCase):
         def respond(req):
             self.calls.append(req)
             if req.url.path.endswith('/state'):
-                return httpx.Response(200, json={"code": 0, "data": {"state": "upstream-secret", "authUrl": ('https://evil.example/login' if self.bad_url else BASE + '/login') + '?state=upstream-secret'}}, headers={"set-cookie": "login-session=test-cookie; Path=/"})
+                return httpx.Response(200, json={"code": 0, "data": {"state": "upstream-secret", "authUrl": ('https://evil.example/login' if self.bad_url else CN_BASE + '/login') + '?state=upstream-secret'}}, headers={"set-cookie": "login-session=test-cookie; Path=/"})
             self.assertIn('login-session=test-cookie', req.headers.get('cookie', ''))
             if req.url.path.endswith('/token'):
                 if not self.authorized:
@@ -29,7 +29,7 @@ class BrowserLoginTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(200, json={"code": 0, "data": {"accessToken": "private-access", "refreshToken": "private-refresh", "expiresIn": 3600, "domain": "www.codebuddy.cn"}})
             self.assertEqual(req.headers['authorization'], 'Bearer private-access')
             return httpx.Response(200, json={"code": 0, "data": {} if self.bad_account else {"uid": "test-uid", "nickname": "测试授权账号"}})
-        self.manager = BrowserLogin(self.saver, lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)), lambda: self.time)
+        self.manager = BrowserLogin(self.saver, lambda **kwargs: httpx.AsyncClient(transport=httpx.MockTransport(respond)), lambda: self.time)
 
     async def asyncTearDown(self):
         await self.manager.close()

@@ -1,4 +1,4 @@
-"""CodeBuddy CN browser authorization. Tokens never cross the management API."""
+"""Browser authorization for both CN and International WorkBuddy versions."""
 import asyncio
 import math
 import secrets
@@ -8,13 +8,23 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from fastapi import HTTPException
 
-BASE = "https://copilot.tencent.com"
-HEADERS = {
+CN_BASE = "https://copilot.tencent.com"
+CN_HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/plain, */*",
     "X-Requested-With": "XMLHttpRequest",
     "Origin": "https://www.codebuddy.cn",
     "Referer": "https://www.codebuddy.cn/",
+    "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
+}
+
+INTL_BASE = "https://copilot.workbuddy.ai"
+INTL_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "X-Requested-With": "XMLHttpRequest",
+    "Origin": "https://workbuddy.ai",
+    "Referer": "https://workbuddy.ai/",
     "User-Agent": "CLI/2.63.2 CodeBuddy/2.63.2",
 }
 TTL = 300
@@ -23,7 +33,7 @@ TTL = 300
 class BrowserLogin:
     def __init__(self, save_account, client_factory=None, clock=time.time):
         self.save_account = save_account
-        self.client_factory = client_factory or (lambda: httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=False))
+        self.client_factory = client_factory or (lambda: httpx.AsyncClient(headers=CN_HEADERS, timeout=20, follow_redirects=False))
         self.clock = clock
         self.flows = {}
         self.guard = asyncio.Lock()
@@ -60,15 +70,27 @@ class BrowserLogin:
             raise HTTPException(502, "授权服务返回格式异常")
         return obj
 
-    async def start(self, owner, name):
+    async def start(self, owner, name, version="cn"):
         async with self.guard:
             await self.cleanup()
             if len(self.flows) >= 16:
                 raise HTTPException(429, "等待授权的请求过多，请稍后重试")
             await self.cancel_owner(owner)
-            client = self.client_factory()
+
+            if version == "intl":
+                base = INTL_BASE
+                headers = dict(INTL_HEADERS)
+                valid_hostname = "copilot.workbuddy.ai"
+                valid_redirect = "workbuddy.ai"
+            else:
+                base = CN_BASE
+                headers = dict(CN_HEADERS)
+                valid_hostname = "copilot.tencent.com"
+                valid_redirect = "www.codebuddy.cn"
+
+            client = self.client_factory(headers=headers, timeout=20, follow_redirects=False)
             try:
-                obj = self.envelope(await client.post(BASE + "/v2/plugin/auth/state", params={"platform": "CLI"}, json={}))
+                obj = self.envelope(await client.post(base + "/v2/plugin/auth/state", params={"platform": "CLI"}, json={}))
                 data = obj.get("data") or {}
                 if obj.get("code") != 0 or not isinstance(data, dict):
                     raise HTTPException(502, "无法生成授权链接，请稍后重试")
@@ -76,14 +98,14 @@ class BrowserLogin:
                 if not isinstance(state, str) or not 1 <= len(state) <= 2048 or not isinstance(url, str) or len(url) > 8192:
                     raise HTTPException(502, "授权服务缺少有效的登录信息")
                 parts = urlsplit(url)
-                if (parts.scheme != "https" or parts.hostname != "copilot.tencent.com" or parts.port not in (None, 443)
+                if (parts.scheme != "https" or parts.hostname != valid_hostname or parts.port not in (None, 443)
                         or parts.username or parts.password or parts.path != "/login"
                         or parse_qs(parts.query).get("state") != [state]):
                     raise HTTPException(502, "授权链接校验失败，请重新生成")
                 fid = secrets.token_urlsafe(24)
                 flow = {"owner": owner, "state": state, "client": client, "name": name,
                         "expires": self.clock() + TTL, "lock": asyncio.Lock(), "next_poll": 0,
-                        "tokens": None, "saved": None}
+                        "tokens": None, "saved": None, "version": version}
                 self.flows[fid] = flow
                 return {"id": fid, "url": url, "expires_at": int(flow["expires"] * 1000), "interval": 3}
             except BaseException:
@@ -117,9 +139,17 @@ class BrowserLogin:
             if flow["next_poll"] > self.clock():
                 return {"status": "pending"}
             flow["next_poll"] = self.clock() + 3
+
+            if flow["version"] == "intl":
+                base = INTL_BASE
+                headers = dict(INTL_HEADERS)
+            else:
+                base = CN_BASE
+                headers = dict(CN_HEADERS)
+
             client = flow["client"]
             if flow["tokens"] is None:
-                obj = self.envelope(await client.get(BASE + "/v2/plugin/auth/token", params={"state": flow["state"]}))
+                obj = self.envelope(await client.get(base + "/v2/plugin/auth/token", params={"state": flow["state"]}, headers=headers))
                 if obj.get("code") == 11217:
                     return {"status": "pending"}
                 if obj.get("code") != 0:
@@ -129,13 +159,11 @@ class BrowserLogin:
                     raise HTTPException(502, "授权服务没有返回完整凭据，请重新登录")
                 flow["tokens"] = tokens
             tok = flow["tokens"]
-            obj = self.envelope(await client.get(BASE + "/v2/plugin/login/account", params={"state": flow["state"]}, headers={"Authorization": "Bearer " + tok["accessToken"]}))
+            obj = self.envelope(await client.get(base + "/v2/plugin/login/account", params={"state": flow["state"]}, headers={"Authorization": "Bearer " + tok["accessToken"]}))
             acct = obj.get("data")
             if obj.get("code") != 0 or not isinstance(acct, dict) or not acct.get("uid"):
                 raise HTTPException(502, "授权已完成，但账号信息暂未获取成功，请稍后重试")
             auth = {k: tok[k] for k in ["accessToken", "refreshToken", "domain"] if k in tok}
-            if "workbuddy.ai" in str(auth.get("domain", "")).lower():
-                raise HTTPException(400, "当前服务仅支持国内 CodeBuddy / WorkBuddy 账号")
             expiry = tok.get("expiresAt")
             if isinstance(expiry, (int, float)) and math.isfinite(expiry) and expiry > 0:
                 auth["expiresAt"] = int(expiry * 1000 if expiry < 100000000000 else expiry)
@@ -147,7 +175,7 @@ class BrowserLogin:
             if flow["expires"] <= self.clock():
                 await self._discard(fid)
                 return {"status": "expired"}
-            doc = {"account": {k: acct.get(k, "") for k in ["uid", "enterpriseId", "nickname"]}, "auth": auth}
+            doc = {"account": {k: acct.get(k, "") for k in ["uid", "enterpriseId", "nickname"]}, "auth": auth, "version": flow["version"]}
             flow["saved"] = self.save_account(doc, flow["name"])
             flow["tokens"] = None
             flow["state"] = ""
