@@ -28,7 +28,7 @@ import {
 } from '@/components/ui/select';
 import {Label} from '@/components/ui/label';
 import {Textarea} from '@/components/ui/textarea';
-import {Tabs, TabsList, TabsTrigger} from '@/components/ui/tabs';
+import {Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/tabs';
 import {
   Dialog,
   DialogBody,
@@ -282,13 +282,214 @@ export default function KeysPage() {
   // （那要多写一层依赖数组，还更容易漏依赖）。
   const normalKeys = keys.filter((k) => !k.packet_id);
   const packetKeys = keys.filter((k) => k.packet_id);
-  const shownKeys = tab === 'packet' ? packetKeys : normalKeys;
+
+  /**
+   * 表格主体，按给定的一批密钥渲染，两个面板各调一次。
+   *
+   * 为什么抽成函数：面板必须待在 <Tabs> 里才拿得到 Radix 的 context，而每个触发器
+   * 都得有一个真实存在的 tabpanel 当 aria-controls 的目标——只留一个面板，另一个
+   * 触发器就指向空元素。Radix 的 TabsContent 会把面板一律挂进 DOM（非激活的带
+   * hidden），所以两个面板同时存在即可，代价是这段 JSX 被引用两次。
+   */
+  const keysTable = (rows: ApiKey[]) => (
+    <section className="overflow-hidden rounded-[20px] bg-muted">
+      <Table>
+        <TableHeader>
+          <TableRow className="border-b border-border/60 hover:bg-transparent">
+            <TableHead className="pl-4 text-[11px] text-muted-foreground">{t('metric.name')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.colPrefix')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
+            {/* 版本列紧跟状态：它和状态一样是「这把密钥的属性」，位置与账号页的列序一致 */}
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.realm')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.expiry')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.colIpModels')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.colUsedTokens')}</TableHead>
+            <TableHead className="text-[11px] text-muted-foreground">{t('keys.colLastUsed')}</TableHead>
+            {isAdmin && <TableHead className="pr-4 text-right text-[11px] text-muted-foreground">{t('accounts.colActions')}</TableHead>}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((k) => {
+            const expired = !!k.expires_at && k.expires_at * 1000 < Date.now();
+            // 两种额度任一超限都算「超额」——界面上必须与网关的拒绝口径**一致**，
+            // 否则会出现「列表显示正常、调用却被 429」，用户会以为是网关坏了。
+            const overQuota =
+              (!!k.quota && k.used_tokens >= k.quota) ||
+              (!!k.quota_credit && k.used_credit >= k.quota_credit);
+            return (
+              <TableRow key={k.id} className="border-b border-border/40">
+                <TableCell className="pl-4 text-sm font-medium">{k.name}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{k.prefix}…</TableCell>
+                <TableCell>
+                  {!k.enabled ? (
+                    <Badge variant="secondary" className="rounded-full text-muted-foreground">{t('keys.badgeDisabled')}</Badge>
+                  ) : expired ? (
+                    <Badge variant="destructive" className="rounded-full">{t('keys.badgeExpired')}</Badge>
+                  ) : overQuota ? (
+                    <Badge variant="destructive" className="rounded-full">{t('keys.badgeOverQuota')}</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="rounded-full text-emerald-600 dark:text-emerald-400">{t('keys.badgeOk')}</Badge>
+                  )}
+                </TableCell>
+                {/* 版本必须排在有效期**前面**，与表头一致（issue #68：这两列的
+                    单元格与表头顺序反了，界面上「版本」列显示的是有效期、「有效期」
+                    列显示的是版本 —— 用户看到的就是这个错位）。 */}
+                <TableCell>
+                  {k.realm === 'global' ? (
+                    <Badge variant="secondary" className="rounded-full text-[10px]">{t('realm.global')}</Badge>
+                  ) : k.realm === 'cn' ? (
+                    <Badge variant="secondary" className="rounded-full text-[10px]">{t('realm.cn')}</Badge>
+                  ) : (
+                    // 存量密钥：本字段引入前创建的，两版都能调。单独标出来
+                    // 而不是默认显示成国内版——那会让人以为它已被限定。
+                    <span
+                      className="text-[10px] text-amber-600 dark:text-amber-400"
+                      title={t('keys.realmUnsetTitle')}
+                    >
+                      {t('keys.realmUnset')}
+                    </span>
+                  )}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {k.expires_at ? fmtDateTime(k.expires_at) : t('keys.neverExpires')}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {k.max_ips ? t('keys.ipLimit', {n: k.max_ips}) : t('keys.ipUnlimited')} /{' '}
+                  {k.models?.length
+                    ? t('keys.modelsCount', {count: k.models.length, n: k.models.length})
+                    : t('keys.modelsAll')}
+                </TableCell>
+                <TableCell className="text-xs tabular-nums">
+                  {(() => {
+                    const ratio = k.quota ? k.used_tokens / k.quota : 0;
+                    const tone = !k.quota
+                      ? 'text-muted-foreground'
+                      : ratio >= 1
+                        ? 'text-red-600 dark:text-red-400 font-medium'
+                        : ratio >= 0.8
+                          ? 'text-amber-600 dark:text-amber-400 font-medium'
+                          : 'text-foreground';
+                    // 积分额度设了才显示积分那一行：没设的密钥（绝大多数）
+                    // 保持原来的单行 token 展示，不让默认视图变吵。
+                    const cRatio = k.quota_credit ? k.used_credit / k.quota_credit : 0;
+                    const cTone = cRatio >= 1
+                      ? 'text-red-600 dark:text-red-400 font-medium'
+                      : cRatio >= 0.8
+                        ? 'text-amber-600 dark:text-amber-400 font-medium'
+                        : 'text-muted-foreground';
+                    return (
+                      <span className="flex flex-col">
+                        <span className={tone}>
+                          {fmtNumber(k.used_tokens)}
+                          {k.quota ? ` / ${fmtNumber(k.quota)}` : ''}
+                        </span>
+                        {!!k.quota_credit && (
+                          <span
+                            className={`text-[10px] ${cTone}`}
+                            title={t('keys.quotaCredit')}
+                          >
+                            {t('keys.creditUsed', {
+                              used: String(k.used_credit),
+                              quota: String(k.quota_credit),
+                            })}
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {k.last_used_at ? (
+                    fmtDateTime(k.last_used_at)
+                  ) : (
+                    <span className="text-muted-foreground/70">{t('keys.neverUsed')}</span>
+                  )}
+                </TableCell>
+                {isAdmin && (
+                  <TableCell className="pr-4">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" title={t('keys.edit')} onClick={() => openEdit(k)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-md"
+                        title={k.enabled ? t('keys.disable') : t('keys.enable')}
+                        onClick={() => toggle(k)}
+                      >
+                        {k.enabled ? <Ban className="h-3.5 w-3.5" /> : <CircleCheck className="h-3.5 w-3.5" />}
+                      </Button>
+                      <ConfirmDialog
+                        title={t('keys.resetUsageTitle')}
+                        description={t('keys.resetUsageDesc', {name: k.name})}
+                        onConfirm={async () => {
+                          await keyApi.resetUsage(k.id);
+                          notify.ok(t('keys.resetDone'));
+                          load();
+                        }}
+                        trigger={
+                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" title={t('keys.resetUsage')}>
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </Button>
+                        }
+                      />
+                      <ConfirmDialog
+                        title={t('keys.deleteTitle', {name: k.name})}
+                        description={t('keys.deleteDesc')}
+                        confirmText={t('keys.delete')}
+                        destructive
+                        onConfirm={async () => {
+                          await keyApi.remove(k.id);
+                          notify.ok(t('keys.deleted'));
+                          load();
+                        }}
+                        trigger={
+                          <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md text-red-500 hover:text-red-600" title={t('keys.delete')}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        }
+                      />
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+
+      {!keys.length && !loading && (
+        <EmptyState
+          icon={KeyRound}
+          title={t('keys.emptyTitle')}
+          description={t('keys.emptyDesc')}
+          className="flex flex-col items-center justify-center py-16 text-center"
+        >
+          {isAdmin && (
+            <Button className="mt-4 rounded-full" onClick={openCreate}>
+              <Plus />
+              {t('keys.newKey')}
+            </Button>
+          )}
+        </EmptyState>
+      )}
+    </section>
+  );
 
   return (
     <div className="flex flex-col gap-4 md:gap-6">
       {/* 分组：红包一次生成一批、额度零碎，与手工建的混在一起很难看。
           数字直接标在 tab 上，不用切过去才知道另一边有多少个。 */}
-      <Tabs id="keys-tabs" value={tab} onValueChange={(v) => setTab(v as 'normal' | 'packet')}>
+      {/* 面板和页头都得待在 <Tabs> 里才拿得到 Radix 的 context，所以 Tabs 现在一直
+          包到表格结束。它自带 flex-col + gap-2，会顶掉外层的 gap-4 / md:gap-6，用
+          display:contents 让它不生成盒子，子元素直接参与外层间距，视觉与改动前一致。 */}
+      <Tabs
+        id="keys-tabs"
+        value={tab}
+        onValueChange={(v) => setTab(v as 'normal' | 'packet')}
+        className="contents"
+      >
         <TabsList className="rounded-full">
           <TabsTrigger value="normal" className="rounded-full">
             {t('keys.tabNormal')} · {normalKeys.length}
@@ -297,206 +498,25 @@ export default function KeysPage() {
             {t('keys.tabPacket')} · {packetKeys.length}
           </TabsTrigger>
         </TabsList>
+
+        <PageHeader
+          title={t('keys.title')}
+          description={t('keys.description')}
+          actions={
+            <>
+              {isAdmin && (
+                <Button size="sm" className="rounded-full" onClick={openCreate}>
+                  <Plus />
+                  {t('keys.newKey')}
+                </Button>
+              )}
+            </>
+          }
+        />
+
+        <TabsContent value="normal">{keysTable(normalKeys)}</TabsContent>
+        <TabsContent value="packet">{keysTable(packetKeys)}</TabsContent>
       </Tabs>
-
-      <PageHeader
-        title={t('keys.title')}
-        description={t('keys.description')}
-        actions={
-          <>
-            {isAdmin && (
-              <Button size="sm" className="rounded-full" onClick={openCreate}>
-                <Plus />
-                {t('keys.newKey')}
-              </Button>
-            )}
-          </>
-        }
-      />
-
-      <section className="overflow-hidden rounded-[20px] bg-muted">
-        <Table>
-          <TableHeader>
-            <TableRow className="border-b border-border/60 hover:bg-transparent">
-              <TableHead className="pl-4 text-[11px] text-muted-foreground">{t('metric.name')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.colPrefix')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('accounts.colStatus')}</TableHead>
-              {/* 版本列紧跟状态：它和状态一样是「这把密钥的属性」，位置与账号页的列序一致 */}
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.realm')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.expiry')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.colIpModels')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.colUsedTokens')}</TableHead>
-              <TableHead className="text-[11px] text-muted-foreground">{t('keys.colLastUsed')}</TableHead>
-              {isAdmin && <TableHead className="pr-4 text-right text-[11px] text-muted-foreground">{t('accounts.colActions')}</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {shownKeys.map((k) => {
-              const expired = !!k.expires_at && k.expires_at * 1000 < Date.now();
-              // 两种额度任一超限都算「超额」——界面上必须与网关的拒绝口径**一致**，
-              // 否则会出现「列表显示正常、调用却被 429」，用户会以为是网关坏了。
-              const overQuota =
-                (!!k.quota && k.used_tokens >= k.quota) ||
-                (!!k.quota_credit && k.used_credit >= k.quota_credit);
-              return (
-                <TableRow key={k.id} className="border-b border-border/40">
-                  <TableCell className="pl-4 text-sm font-medium">{k.name}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{k.prefix}…</TableCell>
-                  <TableCell>
-                    {!k.enabled ? (
-                      <Badge variant="secondary" className="rounded-full text-muted-foreground">{t('keys.badgeDisabled')}</Badge>
-                    ) : expired ? (
-                      <Badge variant="destructive" className="rounded-full">{t('keys.badgeExpired')}</Badge>
-                    ) : overQuota ? (
-                      <Badge variant="destructive" className="rounded-full">{t('keys.badgeOverQuota')}</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="rounded-full text-emerald-600 dark:text-emerald-400">{t('keys.badgeOk')}</Badge>
-                    )}
-                  </TableCell>
-                  {/* 版本必须排在有效期**前面**，与表头一致（issue #68：这两列的
-                      单元格与表头顺序反了，界面上「版本」列显示的是有效期、「有效期」
-                      列显示的是版本 —— 用户看到的就是这个错位）。 */}
-                  <TableCell>
-                    {k.realm === 'global' ? (
-                      <Badge variant="secondary" className="rounded-full text-[10px]">{t('realm.global')}</Badge>
-                    ) : k.realm === 'cn' ? (
-                      <Badge variant="secondary" className="rounded-full text-[10px]">{t('realm.cn')}</Badge>
-                    ) : (
-                      // 存量密钥：本字段引入前创建的，两版都能调。单独标出来
-                      // 而不是默认显示成国内版——那会让人以为它已被限定。
-                      <span
-                        className="text-[10px] text-amber-600 dark:text-amber-400"
-                        title={t('keys.realmUnsetTitle')}
-                      >
-                        {t('keys.realmUnset')}
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {k.expires_at ? fmtDateTime(k.expires_at) : t('keys.neverExpires')}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {k.max_ips ? t('keys.ipLimit', {n: k.max_ips}) : t('keys.ipUnlimited')} /{' '}
-                    {k.models?.length
-                      ? t('keys.modelsCount', {count: k.models.length, n: k.models.length})
-                      : t('keys.modelsAll')}
-                  </TableCell>
-                  <TableCell className="text-xs tabular-nums">
-                    {(() => {
-                      const ratio = k.quota ? k.used_tokens / k.quota : 0;
-                      const tone = !k.quota
-                        ? 'text-muted-foreground'
-                        : ratio >= 1
-                          ? 'text-red-600 dark:text-red-400 font-medium'
-                          : ratio >= 0.8
-                            ? 'text-amber-600 dark:text-amber-400 font-medium'
-                            : 'text-foreground';
-                      // 积分额度设了才显示积分那一行：没设的密钥（绝大多数）
-                      // 保持原来的单行 token 展示，不让默认视图变吵。
-                      const cRatio = k.quota_credit ? k.used_credit / k.quota_credit : 0;
-                      const cTone = cRatio >= 1
-                        ? 'text-red-600 dark:text-red-400 font-medium'
-                        : cRatio >= 0.8
-                          ? 'text-amber-600 dark:text-amber-400 font-medium'
-                          : 'text-muted-foreground';
-                      return (
-                        <span className="flex flex-col">
-                          <span className={tone}>
-                            {fmtNumber(k.used_tokens)}
-                            {k.quota ? ` / ${fmtNumber(k.quota)}` : ''}
-                          </span>
-                          {!!k.quota_credit && (
-                            <span
-                              className={`text-[10px] ${cTone}`}
-                              title={t('keys.quotaCredit')}
-                            >
-                              {t('keys.creditUsed', {
-                                used: String(k.used_credit),
-                                quota: String(k.quota_credit),
-                              })}
-                            </span>
-                          )}
-                        </span>
-                      );
-                    })()}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {k.last_used_at ? (
-                      fmtDateTime(k.last_used_at)
-                    ) : (
-                      <span className="text-muted-foreground/70">{t('keys.neverUsed')}</span>
-                    )}
-                  </TableCell>
-                  {isAdmin && (
-                    <TableCell className="pr-4">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" title={t('keys.edit')} onClick={() => openEdit(k)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 rounded-md"
-                          title={k.enabled ? t('keys.disable') : t('keys.enable')}
-                          onClick={() => toggle(k)}
-                        >
-                          {k.enabled ? <Ban className="h-3.5 w-3.5" /> : <CircleCheck className="h-3.5 w-3.5" />}
-                        </Button>
-                        <ConfirmDialog
-                          title={t('keys.resetUsageTitle')}
-                          description={t('keys.resetUsageDesc', {name: k.name})}
-                          onConfirm={async () => {
-                            await keyApi.resetUsage(k.id);
-                            notify.ok(t('keys.resetDone'));
-                            load();
-                          }}
-                          trigger={
-                            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" title={t('keys.resetUsage')}>
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                          }
-                        />
-                        <ConfirmDialog
-                          title={t('keys.deleteTitle', {name: k.name})}
-                          description={t('keys.deleteDesc')}
-                          confirmText={t('keys.delete')}
-                          destructive
-                          onConfirm={async () => {
-                            await keyApi.remove(k.id);
-                            notify.ok(t('keys.deleted'));
-                            load();
-                          }}
-                          trigger={
-                            <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md text-red-500 hover:text-red-600" title={t('keys.delete')}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          }
-                        />
-                      </div>
-                    </TableCell>
-                  )}
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-
-        {!keys.length && !loading && (
-          <EmptyState
-            icon={KeyRound}
-            title={t('keys.emptyTitle')}
-            description={t('keys.emptyDesc')}
-            className="flex flex-col items-center justify-center py-16 text-center"
-          >
-            {isAdmin && (
-              <Button className="mt-4 rounded-full" onClick={openCreate}>
-                <Plus />
-                {t('keys.newKey')}
-              </Button>
-            )}
-          </EmptyState>
-        )}
-      </section>
 
       {/* 新建 / 编辑 */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
