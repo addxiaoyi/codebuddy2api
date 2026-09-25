@@ -1,0 +1,81 @@
+{
+  "listen": ":7863",
+  "api_key": "",
+  "auth_dir": "/opt/workbuddy2api/auths",
+
+  "upstash": {
+    "url": "",
+    "token": ""
+  },
+
+  "schedule": {
+    "checkin_enabled": true,
+    "checkin_hours": [9, 21],
+    "travel_enabled": true,
+    "travel_hours": [9, 21],
+    "activity_enabled": true,
+    "activity_hours": [10],
+    "keepalive_enabled": true,
+    "keepalive_hours": [22],
+    "school_enabled": true,
+    "school_hours": [12],
+    "cat_enabled": true,
+    "cat_hours": [1],
+    "activity_report_count": 5
+  },
+
+  "pool": {
+    "max_in_flight": 3,
+    "max_in_flight_global": 2,
+    "breaker_threshold": 3,
+    "breaker_cooldown": "30m",
+    "breaker_cooldown_max": "6h",
+    "idle_weight_per_hour": 0.5,
+    "idle_weight_max": 5,
+    "expiring_soon": "168h",
+    "cost_explore_interval": "30m"
+  },
+
+  "cooldown": {
+    "soft_rate": "600s",
+    "soft_rate_max": "2h"
+  },
+
+  "features": {
+    "sanitize_blacklist_fingerprints": true
+  },
+
+  "session_sticky": {
+    "enabled": true,
+    "ttl": "30m",
+    "gc_interval": "5m"
+  },
+
+  "prompt": {
+    "mode": "passthrough",
+    "file": ""
+  },
+
+  "server": {
+    "max_body_mb": 8
+  },
+
+  "upstream": {
+    "user_agent": "",
+    "client_name": "",
+    "client_version": "",
+    "cli_version": "",
+    "device_token_file": "",
+    "passthrough_ip": false
+  },
+
+  "global": {
+    "enabled": true,
+    "chat_base": "",
+    "billing_base": ""
+  },
+
+  "admin": {
+    "enabled": false
+  }
+}
