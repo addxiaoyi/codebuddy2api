@@ -243,7 +243,11 @@ export function BatchOAuthDialog({
       <DialogContent className="max-w-[760px] w-[92vw]" showCloseButton>
         <DialogHeader>
           <DialogTitle>{t('oauth.batchTitle', {realm: realmName})}</DialogTitle>
-          <DialogDescription>{t('oauth.batchDesc')}</DialogDescription>
+          {/* 两个版本的登录方式完全不同：国内版没有 Google 入口（微信扫码 /
+              手机号 / 邮箱验证码 / SSO），照国际版写会让国内用户找一个不存在的按钮 */}
+          <DialogDescription>
+            {t(realm === 'global' ? 'oauth.batchDescGlobal' : 'oauth.batchDescCn')}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex w-full flex-col gap-4 px-6 pb-6">
