@@ -45,7 +45,7 @@ WB2API_LOG_FILE = Path(_env(
 ))
 
 # 本管理端数据
-DATA_DIR = Path(_env('WB_DATA_DIR', str(ROOT / 'data')))
+DATA_DIR = Path(_env('WB_DATA_DIR', str(Path(__file__).resolve().parent / 'data')))
 DB_PATH = Path(_env('WB_DB', str(DATA_DIR / 'manager.db')))
 USERS_FILE = Path(_env('WB_USERS_FILE', str(DATA_DIR / 'users.json')))
 STATIC_DIR = Path(_env('WB_STATIC_DIR', str(ROOT / 'web' / 'out')))
