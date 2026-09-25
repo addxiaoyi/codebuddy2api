@@ -48,6 +48,10 @@
     "legal": "Signing in confirms you are authorized to access this system; all actions are logged.",
     "emptySubmit": "Username or password is empty. If your browser auto-filled them, please type the password again manually."
   },
+  "crash": {
+    "title": "The UI crashed, your data didn't",
+    "desc": "Something in this view — usually the embedded third-party sign-in page — broke rendering. Hit Refresh to recover in place; the account pool is unaffected."
+  },
   "notFound": {
     "line1": "Page",
     "line2": "not found",

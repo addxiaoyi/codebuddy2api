@@ -342,12 +342,20 @@ function ActiveSlot({
 
       <div className="relative h-[520px] bg-muted/30">
         {row.url ? (
+          // 必须关进沙箱。授权页是第三方页面，用户在其中点「用 Google 登录」后
+          // 它常会做反嵌套跳转（`window.top.location = ...`）——点击带来的用户
+          // 激活会让浏览器放行这次顶层导航，整个控制台被导航走，用户看到的就是
+          // 「白屏，刷新才回来，再点又白屏」。
+          // 沙箱里**不给** allow-top-navigation / allow-top-navigation-by-user-activation，
+          // 它就只能改自己那个框，劫持不了宿主页面；剩下的开关是登录流程本身的
+          // 需要（脚本、表单、Cookie、弹窗）。
           <iframe
             key={`${row.fid}-${reloadKey}`}
             src={row.url}
             title={row.name}
             className="h-full w-full border-0 bg-white"
             allow="clipboard-write; clipboard-read"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation"
           />
         ) : (
           <div className="flex h-full items-center justify-center">
