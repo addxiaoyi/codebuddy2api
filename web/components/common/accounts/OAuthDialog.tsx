@@ -16,16 +16,15 @@ import {
   DialogDescription,
   DialogHeader,
 } from '@/components/animate-ui/radix/dialog';
-import {accountApi} from '@/lib/api';
+import {accountApi, errText} from '@/lib/api';
 
 type Phase = 'loading' | 'waiting' | 'success' | 'error';
 
 /**
  * 连续失败几次才打断轮询。
  *
- * 取 3（约 6 秒）：单次抖动/超时不该打断用户扫码，而持续失败（例如账号目录
- * 无权写入）必须让用户看到原因 —— 否则界面会一直转圈到 5 分钟后再报
- * 「二维码已失效」，把真正的故障藏起来（issue #26）。
+ * 取 3（约 6 秒）：单次抖动/超时不该打断用户，而持续失败必须让用户看到原因
+ * —— 否则界面会一直转圈到 5 分钟后再报「已失效」，把真正的故障藏起来。
  */
 const POLL_FAIL_LIMIT = 3;
 
@@ -62,99 +61,179 @@ export function OAuthDialog({
     pollingRef.current = false;
   }, []);
 
-  const start = useCallback(async () => {
+  useEffect(() => {
+    if (!open) {
+      // 关闭时只清理前端状态，不调后端 cancel（让后端 TTL 自动过期）
+      stateRef.current = '';
+      stopPoll();
+      return;
+    }
+
+    // 重置状态
     stopPoll();
     failsRef.current = 0;
     setPhase('loading');
     setMessage(t('oauth.requesting'));
     setAuthUrl('');
+
     const version = realm === 'global' ? 'intl' : 'cn';
-    try {
-      const data = await accountApi.oauthStart(name, version);
-      stateRef.current = data.id;
-      setAuthUrl(data.url);
-      setPhase('waiting');
-      setMessage(t('oauth.waiting'));
+    const currentName = name;  // 捕获当前值
 
-      const tick = async () => {
-        if (document.hidden) return;
-        if (pollingRef.current) return;
-        pollingRef.current = true;
-        try {
-          const res = await accountApi.oauthPoll(stateRef.current);
-          failsRef.current = 0;
-          if (res.status === 'success') {
-            stopPoll();
-            setPhase('success');
-            const accountName = res.nickname || res.uid || '';
-            setMessage(
-              res.updated
-                ? t('oauth.successUpdated', {name: accountName})
-                : t('oauth.success', {name: accountName}),
-            );
-            notify.ok(
-              t('oauth.success', {name: accountName}),
-              res.realm === 'global'
-                ? t('oauth.successGlobal')
-                : res.updated
-                  ? t('oauth.successToken')
-                  : t('oauth.successCheckin'),
-            );
-            window.dispatchEvent(new Event('workbuddy-manager:accounts-changed'));
-            onSuccess?.();
-            window.setTimeout(() => onOpenChange(false), 1600);
-          } else if (res.status === 'expired') {
-            stopPoll();
-            setPhase('error');
-            setMessage(t('oauth.expired'));
-          } else if (res.status === 'invalid') {
-            stopPoll();
-            setPhase('error');
-            setMessage(t('oauth.stateLost'));
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const data = await accountApi.oauthStart(currentName, version);
+        if (cancelled) return;
+
+        stateRef.current = data.id;
+        setAuthUrl(data.url);
+        setPhase('waiting');
+        setMessage(t('oauth.waiting'));
+
+        const tick = async () => {
+          if (document.hidden) return;
+          if (pollingRef.current) return;
+          pollingRef.current = true;
+          try {
+            const res = await accountApi.oauthPoll(stateRef.current);
+            failsRef.current = 0;
+            if (res.status === 'success') {
+              stopPoll();
+              setPhase('success');
+              const accountName = res.nickname || res.uid || '';
+              setMessage(
+                res.updated
+                  ? t('oauth.successUpdated', {name: accountName})
+                  : t('oauth.success', {name: accountName}),
+              );
+              notify.ok(
+                t('oauth.success', {name: accountName}),
+                res.realm === 'global'
+                  ? t('oauth.successGlobal')
+                  : res.updated
+                    ? t('oauth.successToken')
+                    : t('oauth.successCheckin'),
+              );
+              window.dispatchEvent(new Event('workbuddy-manager:accounts-changed'));
+              onSuccess?.();
+              window.setTimeout(() => onOpenChange(false), 1600);
+            } else if (res.status === 'expired') {
+              stopPoll();
+              setPhase('error');
+              setMessage(t('oauth.expired'));
+            } else if (res.status === 'invalid') {
+              stopPoll();
+              setPhase('error');
+              setMessage(t('oauth.stateLost'));
+            }
+          } catch (e) {
+            failsRef.current += 1;
+            if (failsRef.current >= POLL_FAIL_LIMIT) {
+              stopPoll();
+              setPhase('error');
+              setMessage(errText(e));
+            }
+          } finally {
+            pollingRef.current = false;
           }
-        } catch (e) {
-          failsRef.current += 1;
-          if (failsRef.current >= POLL_FAIL_LIMIT) {
-            stopPoll();
-            setPhase('error');
-            setMessage(t('oauth.stateLost')); // Using stateLost for general errors
-          }
-        } finally {
-          pollingRef.current = false;
+        };
+
+        tickRef.current = tick;
+        timerRef.current = window.setInterval(tick, 2000);
+        document.addEventListener('visibilitychange', tick);
+      } catch (e) {
+        if (!cancelled) {
+          setPhase('error');
+          setMessage(errText(e));
         }
-      };
+      }
+    })();
 
-      tickRef.current = tick;
-      timerRef.current = window.setInterval(tick, 2000);
-      document.addEventListener('visibilitychange', tick);
-    } catch (e) {
-      setPhase('error');
-      setMessage(t('oauth.stateLost')); // Generic error message
-    }
-  }, [onOpenChange, onSuccess, stopPoll, t]);
-
-  const cancel = useCallback(() => {
-    if (stateRef.current) {
-      accountApi.oauthCancel(stateRef.current).finally(() => {
-        stopPoll();
-        setPhase('error');
-        setMessage(t('oauth.stateLost')); // User canceled
-      });
-    } else {
-      stopPoll();
-    }
-  }, []);
-
-  useEffect(() => {
-    if (open) {
-      start();
-    } else {
-      cancel();
-    }
     return () => {
-      cancel();
+      cancelled = true;
+      // 不在 cleanup 调 oauthCancel —— React effect 可能 double-invoke，
+      // 会把刚 start 出来的 fid 取消掉。让后端 TTL（300s）自动过期清理。
+      stateRef.current = '';
+      stopPoll();
     };
-  }, [open, start, cancel, name, realm]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, realm]);
+
+  const handleRetry = () => {
+    setPhase('loading');
+    setMessage(t('oauth.requesting'));
+    setAuthUrl('');
+    failsRef.current = 0;
+    stopPoll();
+    const version = realm === 'global' ? 'intl' : 'cn';
+    const currentName = name;
+
+    (async () => {
+      try {
+        const data = await accountApi.oauthStart(currentName, version);
+        stateRef.current = data.id;
+        setAuthUrl(data.url);
+        setPhase('waiting');
+        setMessage(t('oauth.waiting'));
+
+        const tick = async () => {
+          if (document.hidden) return;
+          if (pollingRef.current) return;
+          pollingRef.current = true;
+          try {
+            const res = await accountApi.oauthPoll(stateRef.current);
+            failsRef.current = 0;
+            if (res.status === 'success') {
+              stopPoll();
+              setPhase('success');
+              const accountName = res.nickname || res.uid || '';
+              setMessage(
+                res.updated
+                  ? t('oauth.successUpdated', {name: accountName})
+                  : t('oauth.success', {name: accountName}),
+              );
+              notify.ok(
+                t('oauth.success', {name: accountName}),
+                res.realm === 'global'
+                  ? t('oauth.successGlobal')
+                  : res.updated
+                    ? t('oauth.successToken')
+                    : t('oauth.successCheckin'),
+              );
+              window.dispatchEvent(new Event('workbuddy-manager:accounts-changed'));
+              onSuccess?.();
+              window.setTimeout(() => onOpenChange(false), 1600);
+            } else if (res.status === 'expired') {
+              stopPoll();
+              setPhase('error');
+              setMessage(t('oauth.expired'));
+            } else if (res.status === 'invalid') {
+              stopPoll();
+              setPhase('error');
+              setMessage(t('oauth.stateLost'));
+            }
+          } catch (e) {
+            failsRef.current += 1;
+            if (failsRef.current >= POLL_FAIL_LIMIT) {
+              stopPoll();
+              setPhase('error');
+              setMessage(errText(e));
+            }
+          } finally {
+            pollingRef.current = false;
+          }
+        };
+
+        tickRef.current = tick;
+        timerRef.current = window.setInterval(tick, 2000);
+        document.addEventListener('visibilitychange', tick);
+      } catch (e) {
+        setPhase('error');
+        setMessage(errText(e));
+      }
+    })();
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,8 +292,8 @@ export function OAuthDialog({
                   className="rounded-full"
                 />
                 <ShareButton
-                  title={t('oauth.copyLink')} // Reusing copyLink as share title for now
-                  text={t('oauth.descCn')} // Using description as share text
+                  title={t('oauth.copyLink')}
+                  text={realm === 'global' ? t('oauth.descGlobal') : t('oauth.descCn')}
                   url={authUrl}
                 />
               </div>
@@ -241,7 +320,7 @@ export function OAuthDialog({
               {t('common.cancel')}
             </Button>
             {phase === 'error' && (
-              <Button className="flex-1 rounded-full" onClick={() => start()}>
+              <Button className="flex-1 rounded-full" onClick={handleRetry}>
                 {t('oauth.retry')}
               </Button>
             )}

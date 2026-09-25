@@ -1,7 +1,7 @@
 """浏览器 OAuth 登录流程（上游 browser_login.py 的移植）。
 
-支持国内版（copilot.tencent.com）与国际版（copilot.workbuddy.ai）双版本：
-  - version='intl' → copilot.workbuddy.ai + workbuddy.ai Origin
+支持国内版（copilot.tencent.com）与国际版（www.workbuddy.ai）双版本：
+  - version='intl' → www.workbuddy.ai + www.workbuddy.ai Origin
   - version='cn'   → copilot.tencent.com   + www.codebuddy.cn Origin
 
 流程：
@@ -35,13 +35,13 @@ CN_HEADERS = {
     'User-Agent': 'CLI/2.63.2 CodeBuddy/2.63.2',
 }
 
-INTL_BASE = 'https://copilot.workbuddy.ai'
+INTL_BASE = 'https://www.workbuddy.ai'
 INTL_HEADERS = {
     'Content-Type': 'application/json',
     'Accept': 'application/json, text/plain, */*',
     'X-Requested-With': 'XMLHttpRequest',
-    'Origin': 'https://workbuddy.ai',
-    'Referer': 'https://workbuddy.ai/',
+    'Origin': 'https://www.workbuddy.ai',
+    'Referer': 'https://www.workbuddy.ai/',
     'User-Agent': 'CLI/2.63.2 CodeBuddy/2.63.2',
 }
 TTL = 300
@@ -106,8 +106,8 @@ class BrowserLogin:
             if version == 'intl':
                 base = INTL_BASE
                 headers = dict(INTL_HEADERS)
-                valid_hostname = 'copilot.workbuddy.ai'
-                valid_redirect = 'workbuddy.ai'
+                valid_hostname = 'www.workbuddy.ai'
+                valid_redirect = 'www.workbuddy.ai'
             else:
                 base = CN_BASE
                 headers = dict(CN_HEADERS)

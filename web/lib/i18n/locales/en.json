@@ -849,7 +849,9 @@
     "expired": "Authorization expired (timeout), please get a new link",
     "copyLink": "Copy link",
     "retry": "Get a new link",
-    "stateLost": "Authorization lost (server restarted while waiting), please get a new link"
+    "stateLost": "Authorization lost (server restarted while waiting), please get a new link",
+    "addOAuthCn": "Browser OAuth · China",
+    "addOAuthIntl": "Browser OAuth · Global"
   },
   "region": {
     "HK": "Hong Kong SAR China",

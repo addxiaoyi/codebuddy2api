@@ -825,7 +825,9 @@
     "expired": "授权已失效（等待超时），请重新获取",
     "copyLink": "复制链接",
     "retry": "重新获取",
-    "stateLost": "授权已失效（服务端在等待期间重启过），请重新获取"
+    "stateLost": "授权已失效（服务端在等待期间重启过），请重新获取",
+    "addOAuthCn": "浏览器 OAuth · 国内版",
+    "addOAuthIntl": "浏览器 OAuth · 国际版"
   },
   "region": {
     "HK": "中国香港",

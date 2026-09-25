@@ -1272,7 +1272,7 @@ async def oauth_start(
         raise HTTPException(502, '授权服务连接失败，请稍后重试')
 
 
-@router.post('/oauth/{fid}/poll')
+@router.get('/oauth/{fid}/poll')
 async def oauth_poll(fid: str, user: dict = Depends(security.require_admin)) -> dict:
     """轮询 OAuth 授权结果。
 
