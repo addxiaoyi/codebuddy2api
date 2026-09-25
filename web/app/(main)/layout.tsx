@@ -1,6 +1,6 @@
 'use client';
 
-import {memo, useEffect} from 'react';
+import {Children, memo, useEffect} from 'react';
 import {useRouter} from 'next/navigation';
 import {ManagementBar} from '@/components/common/layout/ManagementBar';
 import {LanguageToggle} from '@/components/common/layout/LanguageToggle';
@@ -9,6 +9,18 @@ import {RealmProvider} from '@/lib/realm-context';
 import {useAuth} from '@/lib/auth-context';
 
 const MemoizedManagementBar = memo(ManagementBar);
+
+/**
+ * 给布局收到的 children 补 key。
+ *
+ * Next 交给布局的 children 是数组，而且会嵌一层（数组里还有数组）。直接渲染时内层
+ * 数组在协调阶段会被包成 key 为 null 的 Fragment，里头的元素拿不到 key，React 就
+ * 报 "Each child in a list should have a unique key"——报的是本组件，因为它是这批
+ * 元素的 debug owner，跟底栏那些无关。Children.toArray 会摊平嵌套并逐个补 key。
+ */
+function keyed(node: React.ReactNode) {
+  return Children.toArray(node);
+}
 
 export default function MainLayout({
   children,
@@ -39,7 +51,7 @@ export default function MainLayout({
                   <LanguageToggle />
                   <RealmToggle />
                 </div>
-                {children}
+                {keyed(children)}
               </div>
             </div>
           </div>
