@@ -17,6 +17,20 @@ workbuddy2api** 承担，而它不在本仓库内。
 | 概览 / 统计 | `/api/status`、`/api/stats/upstream` 返回 `ConnectError: All connection attempts failed` |
 | 接口直调 | `GET /api/models` → 502，detail 里带同一条 ConnectError |
 
+## 别把它和 `deploy/standalone/` 弄混
+
+本仓库自己也有容器部署，但那是**另一个东西**：
+
+| | 本仓库自带的转换器 | 管理端的「上游」 |
+| --- | --- | --- |
+| 部署文件 | `deploy/standalone/`、`deploy/one-click/`、`deploy/admin/` | 见下一节 |
+| 容器名 | `codebuddy2openai`、`workbuddy-oneclick`（见各自的 compose） | `workbuddy2api`（`WB2API_CONTAINER` 默认值） |
+| 端口 | 8787 | 7863（`WB2API_BASE` 默认值） |
+| 入口 | `python3 -m core.converter`（standalone）/ `python3 -m admin.server`（one-click、admin） | 上游自己的入口 |
+| 凭据目录 | `CODEBUDDY_AUTH_DIR`（如 `/data/auth`） | `WB_AUTH_DIR`（默认 `/opt/workbuddy2api/auths`） |
+
+两者端口与凭据目录都不同，把 8787 那个当成上游填进 `WB2API_BASE`，管理端会一直连不上。
+
 ## 上游从哪来
 
 默认仓库 slug 是 `Sliverkiss/workbuddy2api`（见 `server/services/updater.py` 的
