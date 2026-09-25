@@ -155,8 +155,9 @@ class OAuthIntlTests(unittest.IsolatedAsyncioTestCase):
             # Patch the module-level _browser_login instance in the accounts router
             with patch.object(accounts, '_browser_login') as mock_browser_login:
                 captured_args = {}
-                async def capture_start(owner, name, version='cn'):
+                async def capture_start(owner, name, version='cn', keep=False):
                     captured_args['version'] = version
+                    captured_args['keep'] = keep
                     return mock_flow
                 mock_browser_login.start = AsyncMock(side_effect=capture_start)
 
@@ -168,6 +169,8 @@ class OAuthIntlTests(unittest.IsolatedAsyncioTestCase):
                 assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
                 assert captured_args.get('version') == 'cn', \
                     f"Expected default version='cn', got {captured_args.get('version')}"
+                assert captured_args.get('keep') is False, \
+                    f"Expected keep=False by default, got {captured_args.get('keep')}"
 
     async def test_oauth_start_cn_version(self):
         """Test that version='cn' uses CN_BASE URL."""
@@ -215,26 +218,30 @@ class OAuthIntlTests(unittest.IsolatedAsyncioTestCase):
             captured_owner = None
             captured_name = None
             captured_version = None
+            captured_keep = None
 
             # Patch the module-level _browser_login instance in the accounts router
             with patch.object(accounts, '_browser_login') as mock_browser_login:
-                async def mock_start(owner, name, version='cn'):
-                    nonlocal captured_owner, captured_name, captured_version
+                async def mock_start(owner, name, version='cn', keep=False):
+                    nonlocal captured_owner, captured_name, captured_version, captured_keep
                     captured_owner = owner
                     captured_name = name
                     captured_version = version
+                    captured_keep = keep
                     return mock_flow
                 mock_browser_login.start = AsyncMock(side_effect=mock_start)
 
                 r = client.post(
                     '/api/oauth/start',
-                    json={'name': 'my-intl-account', 'version': 'intl'}
+                    json={'name': 'my-intl-account', 'version': 'intl', 'keep': True}
                 )
 
                 assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.text}"
                 assert captured_owner is not None, "Owner should be captured"
                 assert captured_name == 'my-intl-account', f"Expected name 'my-intl-account', got {captured_name}"
                 assert captured_version == 'intl', f"Expected version 'intl', got {captured_version}"
+                assert captured_keep is True, \
+                    f"Batch login must forward keep=True, got {captured_keep}"
 
     async def test_oauth_start_intl_headers(self):
         """Test that version='intl' passes correct headers to the browser login service."""

@@ -1261,13 +1261,17 @@ async def oauth_start(
       3. 前端轮询 /oauth/{id}/poll 直到 status='success'
 
     成功后 account 文件写入 auths/ 目录，自动触发上游 reload。
+
+    keep=True 时不去动该用户已有的授权会话 —— 批量登录会并发建 N 个会话，
+    默认的「先清空再新建」会让它们互相删掉，只剩最后一个能轮询到结果。
     """
     name = str(body.get('name') or '')
     version = str(body.get('version') or 'cn')
     if version not in ('cn', 'intl'):
         raise HTTPException(400, 'version 必须是 cn 或 intl')
     try:
-        return await _browser_login.start(_owner_of(user), name, version)
+        return await _browser_login.start(_owner_of(user), name, version,
+                                         keep=bool(body.get('keep')))
     except (httpx.HTTPError, ValueError, TypeError):
         raise HTTPException(502, '授权服务连接失败，请稍后重试')
 

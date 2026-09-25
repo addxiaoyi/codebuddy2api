@@ -130,8 +130,8 @@ export const accountApi = {
       got?: Realm;
     }>('/api/auth/poll', {state, realm, region}),
   /** 浏览器 OAuth 登录（国内版/国际版双版本）。version='cn' 或 'intl' */
-  oauthStart: (name: string = '', version: 'cn' | 'intl' = 'cn') =>
-    post<{id: string; url: string; expires_at: number; interval: number}>('/api/oauth/start', {name, version}),
+  oauthStart: (name: string = '', version: 'cn' | 'intl' = 'cn', keep = false) =>
+    post<{id: string; url: string; expires_at: number; interval: number}>('/api/oauth/start', {name, version, keep}),
   /** 轮询 OAuth 登录结果 */
   oauthPoll: (fid: string) =>
     get<{

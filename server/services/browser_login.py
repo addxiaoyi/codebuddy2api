@@ -90,18 +90,25 @@ class BrowserLogin:
             raise HTTPException(502, '授权服务返回格式异常')
         return obj
 
-    async def start(self, owner: str, name: str | None, version: str = 'cn') -> dict:
+    async def start(self, owner: str, name: str | None, version: str = 'cn',
+                    keep: bool = False) -> dict:
         """发起浏览器 OAuth 授权流程。
 
         owner: 用户 session token 哈希（用于隔离并发）
         name:  账号备注名（可为空）
         version: 'cn' 或 'intl'
+        keep:  True 时保留该 owner 已有的会话（批量登录用）。
+
+            批量场景下 N 个会话属于同一个 owner，若照旧清空，后建的会把先建的
+            全删掉，轮询随即 404 —— 表现为「只有最后一个格子能登录」。单个
+            登录仍走默认的 False：重复点「生成链接」不该叠出多个浏览器会话。
         """
         async with self.guard:
             await self.cleanup()
             if len(self.flows) >= 16:
                 raise HTTPException(429, '等待授权的请求过多，请稍后重试')
-            await self.cancel_owner(owner)
+            if not keep:
+                await self.cancel_owner(owner)
 
             if version == 'intl':
                 base = INTL_BASE
