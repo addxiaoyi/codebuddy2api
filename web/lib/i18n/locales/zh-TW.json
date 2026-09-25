@@ -854,7 +854,13 @@
     "batchEmbedHint": "授權頁已內嵌在下方視窗裡。若一片空白或提示「拒絕連接」，代表該步驟不允許被嵌入，點視窗右上角 ↗ 用新視窗開啟即可（登入成功後這裡仍會自動變綠）。",
     "batchOpenNew": "新視窗開啟",
     "batchFrameHint": "卡住不動可重新載入",
-    "batchReload": "重新載入"
+    "batchReload": "重新載入",
+    "batchRosterTitle": "帳號清單（選填）",
+    "batchRosterPlaceholder": "每行一個：信箱|密碼\nname@example.com|your-password",
+    "batchRosterHint": "一行一個帳號，支援「信箱|密碼」或純信箱，最多 12 個。密碼只留在瀏覽器記憶體裡，不會上傳到伺服器。",
+    "batchRosterParsed": "已辨識 {n} 個",
+    "batchCopyMail": "複製信箱",
+    "batchCopyPwd": "複製密碼"
   },
   "region": {
     "HK": "中國香港",

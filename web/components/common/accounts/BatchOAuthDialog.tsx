@@ -5,11 +5,13 @@ import {useT, type TFn} from '@/lib/i18n/provider';
 import {useRealm} from '@/lib/realm-context';
 import {
   Loader2, CheckCircle2, XCircle, Play, ExternalLink, AlertTriangle,
-  RotateCw, SkipForward,
+  RotateCw, SkipForward, Copy,
 } from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {accountApi, errText} from '@/lib/api';
+import {copyText} from '@/lib/format';
+import {notify} from '@/lib/toast';
 import {cn} from '@/lib/utils';
 import {
   Dialog,
@@ -21,7 +23,8 @@ import {
 
 type Row = {
   i: number;                                   // 1-based 序号
-  name: string;                                // 备注
+  name: string;                                // 备注（粘贴模式下就是邮箱）
+  secret?: string;                             // 粘贴清单里的密码，只在内存里周转
   fid: string;                                 // OAuth 会话 id（轮到时才建）
   url: string;                                 // 授权 url（iframe src）
   status: 'queued' | 'starting' | 'active' | 'ok' | 'failed';
@@ -33,6 +36,35 @@ const POLL_MS = 2500;
 // 服务端会话 TTL 是 300s，这里留点富余，免得刚好卡在过期那一秒被判成失败
 const POLL_TIMEOUT_S = 270;
 const MAX_N = 12;
+
+/**
+ * 拆粘贴进来的账号清单：一行一个，`邮箱|密码` 或纯邮箱。
+ *
+ * 密码只用来给用户一键复制到登录弹窗里，不参与任何请求——所以它只活在这个
+ * 组件的内存里，既不落 localStorage 也不发给后端。重复的邮箱只留第一条，
+ * 否则同一个人会被排队登录两次。
+ */
+function parseRoster(raw: string): Row[] {
+  const seen = new Set<string>();
+  const out: Row[] = [];
+  for (const line of raw.split('\n')) {
+    // 中文输入法里 `|` 很容易打成全角，不归一化的话整行会被当成一个邮箱
+    const cells = line.replace(/｜/g, '|').split('|');
+    const name = (cells[0] ?? '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({
+      i: out.length + 1,
+      name,
+      secret: (cells[1] ?? '').trim(),
+      fid: '',
+      url: '',
+      status: 'queued',
+    });
+    if (out.length >= MAX_N) break;
+  }
+  return out;
+}
 
 export function BatchOAuthDialog({
   open,
@@ -48,9 +80,12 @@ export function BatchOAuthDialog({
 
   const [count, setCount] = useState(4);
   const [prefix, setPrefix] = useState('batch');
+  const [raw, setRaw] = useState('');              // 粘贴进来的账号清单原文
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [rows, setRows] = useState<Row[]>([]);
   const [reloadKey, setReloadKey] = useState(0);   // 重载 iframe 用
+
+  const roster = parseRoster(raw);
 
   const rowsRef = useRef<Row[]>([]);
   rowsRef.current = rows;
@@ -137,14 +172,18 @@ export function BatchOAuthDialog({
     stopPolling();
     busyRef.current = false;
 
+    // 粘贴了清单就按清单排队（备注直接用邮箱，登录完能一一对上号）；
+    // 没粘就退回「数量 + 前缀」那套
     const n = Math.max(1, Math.min(MAX_N, count));
-    const fresh: Row[] = Array.from({length: n}, (_, k) => ({
-      i: k + 1,
-      name: `${prefix}-${String(k + 1).padStart(2, '0')}`,
-      fid: '',
-      url: '',
-      status: 'queued' as const,
-    }));
+    const fresh: Row[] = roster.length
+      ? roster
+      : Array.from({length: n}, (_, k) => ({
+          i: k + 1,
+          name: `${prefix}-${String(k + 1).padStart(2, '0')}`,
+          fid: '',
+          url: '',
+          status: 'queued' as const,
+        }));
 
     // settle 会立刻回读 rowsRef 找下一个，不能等重渲染
     rowsRef.current = fresh;
@@ -185,8 +224,10 @@ export function BatchOAuthDialog({
   const ok = rows.filter((r) => r.status === 'ok').length;
   const failed = rows.filter((r) => r.status === 'failed').length;
   const done = ok + failed;
-  const total = Math.max(count, rows.length);
+  // 跑起来之后以实际排队的行数为准：粘贴清单时行数和「数量」输入框无关
+  const total = rows.length || count;
   const pct = total ? Math.round((done / total) * 100) : 0;
+  const usingRoster = roster.length > 0;
 
   return (
     <Dialog
@@ -206,6 +247,29 @@ export function BatchOAuthDialog({
         </DialogHeader>
 
         <div className="flex w-full flex-col gap-4 px-6 pb-6">
+          {/* 粘贴清单：有内容就按它排队，下面的「数量 / 前缀」自动让位 */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-medium">{t('oauth.batchRosterTitle')}</div>
+              {usingRoster && (
+                <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400">
+                  {t('oauth.batchRosterParsed', {n: roster.length})}
+                </span>
+              )}
+            </div>
+            <textarea
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              rows={3}
+              disabled={phase === 'running'}
+              placeholder={t('oauth.batchRosterPlaceholder')}
+              spellCheck={false}
+              autoComplete="off"
+              className="w-full resize-y rounded-lg border bg-background px-3 py-2 font-mono text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
+            />
+            <div className="text-[10px] text-muted-foreground">{t('oauth.batchRosterHint')}</div>
+          </div>
+
           {/* 控制栏 */}
           <div className="flex items-end gap-3">
             <div className="w-[110px] space-y-1">
@@ -214,7 +278,7 @@ export function BatchOAuthDialog({
                 type="number" min={1} max={MAX_N} value={count}
                 onChange={(e) => setCount(Number(e.target.value))}
                 className="h-9 rounded-full text-xs"
-                disabled={phase === 'running'}
+                disabled={phase === 'running' || usingRoster}
               />
             </div>
             <div className="w-[160px] space-y-1">
@@ -222,7 +286,7 @@ export function BatchOAuthDialog({
               <Input
                 value={prefix} onChange={(e) => setPrefix(e.target.value)}
                 className="h-9 rounded-full text-xs"
-                disabled={phase === 'running'}
+                disabled={phase === 'running' || usingRoster}
               />
             </div>
 
@@ -324,7 +388,7 @@ function ActiveSlot({
     <div className="flex flex-col overflow-hidden rounded-xl border bg-background">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <span className="font-mono text-[11px] text-muted-foreground">{row.i}</span>
-        <span className="flex-1 truncate font-mono text-[11px]" title={row.fid}>{row.name}</span>
+        <span className="flex-1 truncate font-mono text-[11px]" title={row.name}>{row.name}</span>
         <span className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
           <Loader2 className="h-3 w-3 animate-spin" />
           {row.status === 'starting' ? t('oauth.batchStarting') : t('oauth.batchWaiting')}
@@ -339,6 +403,18 @@ function ActiveSlot({
           </a>
         )}
       </div>
+
+      {/* 粘贴模式才有的凭据条：授权页在跨域 iframe 里，脚本没法往里填值，
+          所以只做到「一键复制」，剩下的由用户贴进登录弹窗 */}
+      {row.secret && (
+        <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5">
+          <span className="flex-1 truncate font-mono text-[10px] text-muted-foreground" title={row.name}>
+            {row.name}
+          </span>
+          <CopyChip label={t('oauth.batchCopyMail')} value={row.name} />
+          <CopyChip label={t('oauth.batchCopyPwd')} value={row.secret} />
+        </div>
+      )}
 
       <div className="relative h-[520px] bg-muted/30">
         {row.url ? (
@@ -423,6 +499,26 @@ function QueueChip({row, t, onRetry}: {row: Row; t: TFn; onRetry: () => void}) {
       <span className="opacity-70">
         {row.status === 'failed' ? t('oauth.batchRetry') : label}
       </span>
+    </button>
+  );
+}
+
+/** 复制一小段文本（邮箱/密码），结果如实回报——写不进剪贴板时不假装成功。 */
+function CopyChip({label, value}: {label: string; value: string}) {
+  const t = useT();
+
+  const grab = async () => {
+    if (await copyText(value)) notify.ok(t('common.copied'));
+    else notify.warn(t('common.copyFailed'), t('common.manualCopy'));
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={grab}
+      className="inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <Copy className="h-3 w-3" />{label}
     </button>
   );
 }

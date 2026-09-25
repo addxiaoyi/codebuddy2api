@@ -878,7 +878,13 @@
     "batchEmbedHint": "The auth page is embedded in the window below. If it stays blank or says «refused to connect», that step disallows embedding — click ↗ at the top-right to open it in a new window (it still turns green here after login).",
     "batchOpenNew": "Open in new window",
     "batchFrameHint": "Stuck? Reload the frame",
-    "batchReload": "Reload"
+    "batchReload": "Reload",
+    "batchRosterTitle": "Account list (optional)",
+    "batchRosterPlaceholder": "One per line: email|password\nname@example.com|your-password",
+    "batchRosterHint": "One account per line — either email|password or just the email, 12 max. Passwords stay in browser memory and are never sent to the server.",
+    "batchRosterParsed": "{n} detected",
+    "batchCopyMail": "Copy email",
+    "batchCopyPwd": "Copy password"
   },
   "region": {
     "HK": "Hong Kong SAR China",

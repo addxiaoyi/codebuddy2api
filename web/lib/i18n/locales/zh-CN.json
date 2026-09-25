@@ -854,7 +854,13 @@
     "batchEmbedHint": "授权页已内嵌在下方窗口里。若一片空白或提示「拒绝连接」，说明该步不允许被嵌入，点窗口右上角 ↗ 用新窗口打开即可（登录成功后这里仍会自动变绿）。",
     "batchOpenNew": "新窗口打开",
     "batchFrameHint": "卡住不动可重载",
-    "batchReload": "重载"
+    "batchReload": "重载",
+    "batchRosterTitle": "账号清单（可选）",
+    "batchRosterPlaceholder": "每行一个：邮箱|密码\nname@example.com|your-password",
+    "batchRosterHint": "一行一个账号，支持「邮箱|密码」或纯邮箱，最多 12 个。密码只留在浏览器内存里，不会上传到服务端。",
+    "batchRosterParsed": "已识别 {n} 个",
+    "batchCopyMail": "复制邮箱",
+    "batchCopyPwd": "复制密码"
   },
   "region": {
     "HK": "中国香港",

@@ -854,7 +854,13 @@
     "batchEmbedHint": "認証ページは下のウィンドウに埋め込まれています。真っ白だったり「接続が拒否されました」と出る場合は、その手順が埋め込みを許可していません。右上の ↗ から新しいウィンドウで開いてください（ログイン後、ここは自動で緑になります）。",
     "batchOpenNew": "新しいウィンドウで開く",
     "batchFrameHint": "固まったら再読み込み",
-    "batchReload": "再読み込み"
+    "batchReload": "再読み込み",
+    "batchRosterTitle": "アカウント一覧（任意）",
+    "batchRosterPlaceholder": "1行に1件：メール|パスワード\nname@example.com|your-password",
+    "batchRosterHint": "1行につき1アカウント。「メール|パスワード」またはメールのみ、最大12件。パスワードはブラウザのメモリ内にのみ保持され、サーバーには送信されません。",
+    "batchRosterParsed": "{n} 件を認識",
+    "batchCopyMail": "メールをコピー",
+    "batchCopyPwd": "パスワードをコピー"
   },
   "region": {
     "HK": "中国香港",

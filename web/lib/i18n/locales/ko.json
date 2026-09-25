@@ -854,7 +854,13 @@
     "batchEmbedHint": "인증 페이지가 아래 창에 삽입되어 있습니다. 비어 있거나 「연결이 거부됨」이 표시되면 해당 단계가 삽입을 허용하지 않는 것입니다. 오른쪽 위 ↗를 눌러 새 창에서 여세요(로그인하면 여기도 자동으로 초록색이 됩니다).",
     "batchOpenNew": "새 창에서 열기",
     "batchFrameHint": "멈추면 새로고침하세요",
-    "batchReload": "새로고침"
+    "batchReload": "새로고침",
+    "batchRosterTitle": "계정 목록 (선택)",
+    "batchRosterPlaceholder": "한 줄에 하나: 이메일|비밀번호\nname@example.com|your-password",
+    "batchRosterHint": "한 줄에 계정 하나. '이메일|비밀번호' 또는 이메일만, 최대 12개. 비밀번호는 브라우저 메모리에만 남고 서버로 전송되지 않습니다.",
+    "batchRosterParsed": "{n}개 인식됨",
+    "batchCopyMail": "이메일 복사",
+    "batchCopyPwd": "비밀번호 복사"
   },
   "region": {
     "HK": "중국 홍콩",
