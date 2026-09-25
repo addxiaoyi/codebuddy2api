@@ -26,8 +26,9 @@ type Row = {
   name: string;                                // 备注（粘贴模式下就是邮箱）
   secret?: string;                             // 粘贴清单里的密码，只在内存里周转
   fid: string;                                 // OAuth 会话 id（轮到时才建）
-  url: string;                                 // 授权 url（iframe src）
+  url: string;                                 // 授权页地址，在新标签页里打开
   status: 'queued' | 'starting' | 'active' | 'ok' | 'failed';
+  popped?: boolean;                            // 授权页是否真开出来了（被拦截时为 false）
   detail?: string;                             // nickname/uid 或错误
   startedMs?: number;
 };
@@ -83,15 +84,58 @@ export function BatchOAuthDialog({
   const [raw, setRaw] = useState('');              // 粘贴进来的账号清单原文
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [rows, setRows] = useState<Row[]>([]);
-  const [reloadKey, setReloadKey] = useState(0);   // 重载 iframe 用
 
   const roster = parseRoster(raw);
 
   const rowsRef = useRef<Row[]>([]);
   rowsRef.current = rows;
   const pollerRef = useRef(0);                     // 当前唯一在跑的轮询句柄
+  const tabRef = useRef<Window | null>(null);      // 占住并复用的授权标签页
   const busyRef = useRef(false);                   // 串行闸门：一次只跑一个会话
   const runRef = useRef<(i: number) => void>(() => {});
+
+  /**
+   * 占一个空白标签页，整批复用。
+   *
+   * 必须趁「开始批量」这个点击手势**同步**调用：授权地址要等 oauthStart 返回才有，
+   * 而 await 之后手势就失效了，那时再 window.open 必被当弹窗拦掉——连第一个账号
+   * 都开不出来。所以先占坑，之后每轮把地址写进去。上一批留下的标签页还活着就接着用，
+   * 免得连点几次攒出一排标签页。
+   */
+  const reserveTab = useCallback(() => {
+    const kept = tabRef.current;
+    if (kept && !kept.closed) return true;
+    const w = window.open('about:blank', '_blank');
+    if (!w) return false;
+    w.opener = null;                               // 别把控制台交到第三方页面手里
+    // 预留到导航之间会短暂空白，写一行字免得看着像崩了
+    w.document.write(
+      '<title>正在准备授权页…</title><body style="font:14px/1.6 system-ui;padding:48px;color:#888">正在准备授权页…</body>',
+    );
+    tabRef.current = w;
+    return true;
+  }, []);
+
+  /**
+   * 把授权地址推进标签页。返回是否成功——被拦或标签页被用户关掉时为 false，
+   * 界面据此显示手动按钮兜底，而不是假装成功了。
+   */
+  const showAuth = useCallback((url: string) => {
+    const w = tabRef.current;
+    if (w && !w.closed) {
+      try {
+        w.location.replace(url);                 // replace 不留历史，按返回不会被拽回上一轮
+        return true;
+      } catch {
+        tabRef.current = null;                   // 标签页中途被关，退回现开
+      }
+    }
+    const fresh = window.open(url, '_blank');
+    if (!fresh) return false;
+    fresh.opener = null;
+    tabRef.current = fresh;
+    return true;
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollerRef.current) window.clearInterval(pollerRef.current);
@@ -118,11 +162,10 @@ export function BatchOAuthDialog({
   }, [stopPolling]);
 
   /**
-   * 跑第 i 个：轮到时才建会话 → 挂 iframe → 轮询到结果。
+   * 跑第 i 个：轮到时才建会话 → 在新标签页开授权页 → 轮询到结果。
    *
-   * 一次只放一个 iframe：授权页是完整的 SPA，N 个同时挂载会让浏览器把 CPU 和
-   * 内存吃满，表现为整页卡死。串行还有个附带好处 —— 会话按需创建，不会出现
-   * 排队排到一半、服务端 TTL(300s) 已经过期的情况。
+   * 串行的意义：会话按需创建，不会出现排队排到一半、服务端 TTL(300s) 已经
+   * 过期的情况；界面上也永远只有一个待办账号，不会一下开出十几个标签页。
    */
   const runOne = useCallback(async (i: number) => {
     if (busyRef.current) return;
@@ -142,8 +185,9 @@ export function BatchOAuthDialog({
     }
 
     const startedMs = Date.now();
+    const popped = showAuth(flow.url);
     setRows((prev) =>
-      prev.map((r) => (r.i === i ? {...r, ...flow, status: 'active', startedMs} : r)),
+      prev.map((r) => (r.i === i ? {...r, ...flow, status: 'active', startedMs, popped} : r)),
     );
 
     pollerRef.current = window.setInterval(async () => {
@@ -164,9 +208,15 @@ export function BatchOAuthDialog({
         settle(i, 'failed', `timeout ${POLL_TIMEOUT_S}s`);
       }
     }, POLL_MS);
-  }, [prefix, realm, settle, stopPolling]);
+  }, [prefix, realm, settle, stopPolling, showAuth]);
 
   runRef.current = (i: number) => void runOne(i);
+
+  /** 手动打开 / 重新打开授权页（自动弹出被拦、或者用户把标签页关早了）。 */
+  const reopen = (row: Row) => {
+    const popped = showAuth(row.url);
+    setRows((prev) => prev.map((r) => (r.i === row.i ? {...r, popped} : r)));
+  };
 
   const start = () => {
     stopPolling();
@@ -189,6 +239,7 @@ export function BatchOAuthDialog({
     rowsRef.current = fresh;
     setRows(fresh);
     setPhase('running');
+    reserveTab();                 // 借这次点击占住标签页，整批复用，后面才不会被当弹窗拦
     runRef.current(1);
   };
 
@@ -333,13 +384,12 @@ export function BatchOAuthDialog({
             </div>
           )}
 
-          {/* 当前窗口 + 队列 */}
+          {/* 当前账号 + 队列 */}
           <div className="flex flex-col gap-3">
-            <ActiveSlot
+            <AuthPanel
               row={rows.find((r) => r.status === 'active' || r.status === 'starting')}
               t={t}
-              reloadKey={reloadKey}
-              onReload={() => setReloadKey((k) => k + 1)}
+              onOpen={reopen}
               onSkip={skip}
             />
 
@@ -348,13 +398,6 @@ export function BatchOAuthDialog({
                 {rows.map((r) => (
                   <QueueChip key={r.i} row={r} t={t} onRetry={() => retry(r.i)} />
                 ))}
-              </div>
-            )}
-
-            {rows.length > 0 && (
-              <div className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
-                <span>{t('oauth.batchEmbedHint')}</span>
               </div>
             )}
 
@@ -370,48 +413,44 @@ export function BatchOAuthDialog({
   );
 }
 
-/** 唯一的活动窗口：只有这里会挂 iframe，其余账号在队列里等。 */
-function ActiveSlot({
-  row, t, reloadKey, onReload, onSkip,
+/**
+ * 当前账号面板：一个「新标签页打开授权页」的入口 + 凭据复制。
+ *
+ * 为什么不像早期版本那样把授权页 iframe 内嵌在这里：第三方页面在用户点击后
+ * 常做反嵌套顶层跳转（`window.top.location = ...`），整页会被导航走，表现
+ * 就是「白屏 → 刷新才回来 → 再点又白屏」。改成新标签页后主页面不再承载任何
+ * 第三方内容，轮询照跑，登录成功依旧自动切下一个。
+ */
+function AuthPanel({
+  row, t, onOpen, onSkip,
 }: {
   row?: Row;
   t: TFn;
-  reloadKey: number;
-  onReload: () => void;
+  onOpen: (row: Row) => void;
   onSkip: (row: Row) => void;
 }) {
   if (!row) {
     return (
-      <div className="flex h-[120px] items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">
-        {t('oauth.batchSlotIdle')}
+      <div className="flex h-[110px] items-center justify-center rounded-xl border border-dashed text-xs text-muted-foreground">
+        {t('oauth.batchPanelIdle')}
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border bg-background">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
+    <div className="flex flex-col gap-3 rounded-xl border bg-background p-3">
+      <div className="flex items-center gap-2">
         <span className="font-mono text-[11px] text-muted-foreground">{row.i}</span>
         <span className="flex-1 truncate font-mono text-[11px]" title={row.name}>{row.name}</span>
         <span className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
           <Loader2 className="h-3 w-3 animate-spin" />
           {row.status === 'starting' ? t('oauth.batchStarting') : t('oauth.batchWaiting')}
         </span>
-        {row.url && (
-          <a
-            href={row.url} target="_blank" rel="noopener noreferrer"
-            title={t('oauth.batchOpenNew')}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
       </div>
 
-      {/* 粘贴模式才有的凭据条：授权页在跨域 iframe 里，脚本没法往里填值，
-          所以只做到「一键复制」，剩下的由用户贴进登录弹窗 */}
+      {/* 凭据条：授权页在另一个标签页里，脚本伸不进那个页面，只做到一键复制 */}
       {row.secret && (
-        <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5">
+        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-2 py-1.5">
           <span className="flex-1 truncate font-mono text-[10px] text-muted-foreground" title={row.name}>
             {row.name}
           </span>
@@ -420,52 +459,37 @@ function ActiveSlot({
         </div>
       )}
 
-      <div className="relative h-[520px] bg-muted/30">
-        {row.url ? (
-          // 必须关进沙箱。授权页是第三方页面，用户在其中点「用 Google 登录」后
-          // 它常会做反嵌套跳转（`window.top.location = ...`）——点击带来的用户
-          // 激活会让浏览器放行这次顶层导航，整个控制台被导航走，用户看到的就是
-          // 「白屏，刷新才回来，再点又白屏」。
-          // 沙箱里**不给** allow-top-navigation / allow-top-navigation-by-user-activation，
-          // 它就只能改自己那个框，劫持不了宿主页面；剩下的开关是登录流程本身的
-          // 需要（脚本、表单、Cookie、弹窗）。
-          <iframe
-            key={`${row.fid}-${reloadKey}`}
-            src={row.url}
-            title={row.name}
-            className="h-full w-full border-0 bg-white"
-            allow="clipboard-write; clipboard-read"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between border-t px-3 py-1.5">
-        <span className="text-[10px] text-muted-foreground">{t('oauth.batchFrameHint')}</span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={onReload}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <RotateCw className="h-3 w-3" />{t('oauth.batchReload')}
-          </button>
-          <button
-            onClick={() => onSkip(row)}
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <SkipForward className="h-3 w-3" />{t('oauth.batchSkip')}
-          </button>
+      {row.url && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" className="rounded-full gap-1.5" onClick={() => onOpen(row)}>
+            <ExternalLink className="h-3.5 w-3.5" />
+            {t('oauth.batchOpenAuth')}
+          </Button>
+          {!row.popped && (
+            <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              {t('oauth.batchPopupBlocked')}
+            </span>
+          )}
         </div>
+      )}
+
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-[10px] leading-relaxed text-muted-foreground">
+          {t('oauth.batchTabHint')}
+        </span>
+        <button
+          onClick={() => onSkip(row)}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <SkipForward className="h-3 w-3" />{t('oauth.batchSkip')}
+        </button>
       </div>
     </div>
   );
 }
 
-/** 队列里的小格子：只报状态，不挂 iframe。 */
+/** 队列里的小格子：只报状态。 */
 function QueueChip({row, t, onRetry}: {row: Row; t: TFn; onRetry: () => void}) {
   const style = {
     queued: 'border-border text-muted-foreground',
