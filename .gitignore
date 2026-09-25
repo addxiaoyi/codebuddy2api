@@ -17,13 +17,18 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# SQLite 的 WAL / SHM 是运行产物：每次写入都变，且 WAL 里压着**尚未 check 进主库的
-# 明文行**（实测 WAL 2.1MB 而主库仅 4KB，等于把整库内容以最原始形态提交了一次）。
-# 它们由 SQLite 自己重建，不需要也不该进版本库。
+# SQLite 数据库与其 WAL/SHM/journal：全是运行产物，且 WAL 里压着**尚未 check 进主库的
+# 明文行**。实测曾把 2.1MB 的 WAL 提交了 11 次而主库始终是 4KB 空头 —— 等于把整库内容
+# 以最原始形态反复推了上去。这些文件由 SQLite 自己重建，不需要也不该进版本库。
+*.db
 *.db-shm
 *.db-wal
+*.db-journal
 
 # 个人 / 敏感信息（绝不提交）
+# users.json 存着会话签名用的 secret（64 位十六进制）与管理员口令哈希。
+# 它进了版本库就等于把「伪造任意管理员 Cookie」的能力一起发出去了，只读权限即可拿下管理面。
+users.json
 *.token
 *.key
 secrets.*
