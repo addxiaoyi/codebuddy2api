@@ -148,6 +148,25 @@ export const accountApi = {
   /** 取消 OAuth 登录流程 */
   oauthCancel: (fid: string) =>
     del<{status: string}>('/api/oauth/' + fid),
+  /** 批量 Google OAuth 启动 */
+  oauthBatchStart: (count: number, version: 'cn' | 'intl' = 'intl', namePrefix = 'batch', headless = true) =>
+    post<{job_id: string}>('/api/oauth/batch', {count, version, name_prefix: namePrefix, headless}),
+  oauthBatchStatus: (jobId: string) =>
+    get<{
+      job_id: string;
+      status: 'running' | 'done' | 'partial' | 'error';
+      count: number;
+      version: string;
+      progress: number;
+      ok: number;
+      failed: number;
+      accounts: Array<{name?: string; nickname?: string; uid?: string}>;
+      errors: Array<{name?: string; error: string}>;
+      started_at: number;
+      finished_at?: number;
+    }>('/api/oauth/batch/' + jobId),
+  oauthBatchList: () =>
+    get<{jobs: Array<{job_id: string; status: string; count: number; ok: number; failed: number; version: string; started_at: number; finished_at?: number}>}>('/api/oauth/batch'),
   remove: (file: string) => del<{success: boolean}>(`/api/accounts/${encodeURIComponent(file)}`),
   /** 临时禁用 / 启用账号（issue #21）：改文件名 + 触发上游重载。 */
   setDisabled: (file: string, disabled: boolean) =>

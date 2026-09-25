@@ -38,6 +38,7 @@ import {EmptyState} from '@/components/common/layout/EmptyState';
 import {ConfirmDialog} from '@/components/common/layout/ConfirmDialog';
 import {AddAccountDialog} from '@/components/common/accounts/AddAccountDialog';
 import {OAuthDialog} from '@/components/common/accounts/OAuthDialog';
+import {BatchOAuthDialog} from '@/components/common/accounts/BatchOAuthDialog';
 import {CreditCountdown} from '@/components/common/accounts/CreditCountdown';
 import {AccountNoteDialog} from '@/components/common/accounts/AccountNoteDialog';
 import {AccountTaskDialog} from '@/components/common/accounts/AccountTaskDialog';
@@ -64,6 +65,7 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [oauthOpen, setOAuthOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
   // 备注编辑（issue #67）：记的是**哪个账号**而不是布尔——弹窗要以该账号当前的
   // 备注为初值，否则会拿上一个账号的内容去保存。
   const [noteTarget, setNoteTarget] = useState<Account | null>(null);
@@ -826,6 +828,10 @@ export default function AccountsPage() {
                   <ExternalLink className="mr-2 h-3 w-3" />
                   {realm === 'global' ? t('oauth.addOAuthIntl') : t('oauth.addOAuthCn')}
                 </Button>
+                <Button size="sm" variant="outline" className="rounded-full ml-1" onClick={() => setBatchOpen(true)}>
+                  <Users className="mr-1.5 h-3 w-3" />
+                  {realm === 'global' ? t('oauth.addBatchIntl') : t('oauth.addBatchCn')}
+                </Button>
                 <Button size="sm" className="rounded-full ml-1" onClick={() => setAddOpen(true)}>
                   <Plus />
                   {t('accounts.addAccount')}
@@ -957,6 +963,10 @@ export default function AccountsPage() {
                   <ExternalLink className="mr-2 h-4 w-4" />
                   {realm === 'global' ? t('oauth.addOAuthIntl') : t('oauth.addOAuthCn')}
                 </Button>
+                <Button variant="outline" className="rounded-full" onClick={() => setBatchOpen(true)}>
+                  <Users className="mr-1.5 h-4 w-4" />
+                  {realm === 'global' ? t('oauth.addBatchIntl') : t('oauth.addBatchCn')}
+                </Button>
                 <Button className="rounded-full" onClick={() => setAddOpen(true)}>
                   <Plus />
                   {t('accounts.addAccount')}
@@ -981,6 +991,7 @@ export default function AccountsPage() {
 
       <AddAccountDialog open={addOpen} onOpenChange={setAddOpen} onSuccess={load} />
       <OAuthDialog open={oauthOpen} onOpenChange={setOAuthOpen} onSuccess={load} />
+      <BatchOAuthDialog open={batchOpen} onOpenChange={setBatchOpen} onSuccess={load} />
       <AccountNoteDialog
         account={noteTarget}
         open={noteTarget !== null}

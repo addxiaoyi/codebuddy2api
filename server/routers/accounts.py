@@ -1297,3 +1297,115 @@ async def oauth_cancel(fid: str, user: dict = Depends(security.require_admin)) -
         raise
     except (httpx.HTTPError, ValueError, TypeError):
         return {'status': 'cancelled', 'message': '会话已不存在'}
+
+
+# ── 批量 OAuth（Playwright + Google） ─────────────────────────
+
+# 跑起来的批量任务表：job_id → {status, progress, total, results, started_at}
+_batch_jobs: dict[str, dict] = {}
+
+
+@router.post('/oauth/batch')
+async def oauth_batch_start(body: dict = Body(...), user: dict = Depends(security.require_admin)) -> dict:
+    """启动一轮批量 OAuth（后台任务，立即返回 job_id）。
+
+    body:
+      count        int ≥ 1, 要生成的账号数
+      version      'intl' | 'cn'，默认 intl
+      name_prefix  账号备注前缀，默认 'batch'
+      headless     bool，默认 True；调试时可传 False 看浏览器
+
+    返回 {job_id}。进度查 /api/oauth/batch/{job_id}。
+    """
+    import secrets as _secrets
+    from ..services import batch_oauth as _bo
+
+    count = int(body.get('count') or 1)
+    if not 1 <= count <= 50:
+        raise HTTPException(400, 'count 必须 1-50')
+    version = str(body.get('version') or 'intl')
+    if version not in ('cn', 'intl'):
+        raise HTTPException(400, 'version 必须 cn 或 intl')
+    prefix = str(body.get('name_prefix') or 'batch')[:32]
+    headless = bool(body.get('headless', True))
+
+    job_id = _secrets.token_urlsafe(8)
+    job = {
+        'job_id': job_id,
+        'status': 'running',
+        'count': count,
+        'version': version,
+        'progress': 0,
+        'ok': 0,
+        'failed': 0,
+        'accounts': [],
+        'errors': [],
+        'started_at': int(time.time()),
+        'finished_at': None,
+    }
+    _batch_jobs[job_id] = job
+
+    async def _on_progress(i: int, total: int, result: dict):
+        job['progress'] = i
+        if result.get('ok'):
+            job['ok'] += 1
+            job['accounts'].append({'name': result.get('name'), 'nickname': result.get('nickname'), 'uid': result.get('uid')})
+        else:
+            job['failed'] += 1
+            job['errors'].append({'name': result.get('name'), 'error': result.get('error', '')[:200]})
+
+    async def _run():
+        try:
+            result = await _bo.run_batch(
+                count=count,
+                version=version,
+                name_prefix=prefix,
+                job_id=job_id,
+                on_progress=_on_progress,
+                headless=headless,
+            )
+            job['status'] = 'done' if result.get('failed', 0) == 0 else 'partial'
+            job['finished_at'] = int(time.time())
+        except Exception as e:
+            job['status'] = 'error'
+            job['errors'].append({'error': str(e)[:500]})
+            job['finished_at'] = int(time.time())
+
+    asyncio.create_task(_run())
+    return {'job_id': job_id}
+
+
+@router.get('/oauth/batch/{job_id}')
+async def oauth_batch_status(job_id: str, user: dict = Depends(security.require_admin)) -> dict:
+    """查批量 OAuth 进度。"""
+    job = _batch_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, '任务不存在')
+    return job
+
+
+@router.get('/oauth/batch')
+async def oauth_batch_list(user: dict = Depends(security.require_admin)) -> dict:
+    """列出所有批量任务（简表）。"""
+    return {
+        'jobs': [
+            {
+                'job_id': j['job_id'],
+                'status': j['status'],
+                'count': j['count'],
+                'ok': j['ok'],
+                'failed': j['failed'],
+                'version': j['version'],
+                'started_at': j['started_at'],
+                'finished_at': j['finished_at'],
+            }
+            for j in reversed(list(_batch_jobs.values()))
+        ][:20],
+    }
+
+
+@router.delete('/oauth/batch/{job_id}')
+async def oauth_batch_delete(job_id: str, user: dict = Depends(security.require_admin)) -> dict:
+    """清理已完成的任务记录。"""
+    _batch_jobs.pop(job_id, None)
+    return {'ok': True}
