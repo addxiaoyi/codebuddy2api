@@ -1090,7 +1090,7 @@ export default function SettingsPage() {
         }
       />
 
-      <Tabs defaultValue="upstream">
+      <Tabs id="settings-tabs" defaultValue="upstream">
         {/* 标签较多，手机上会撑破容器，这里允许横向滚动 */}
         <div className="-mx-1 overflow-x-auto px-1 pb-1">
         <TabsList className="w-max">

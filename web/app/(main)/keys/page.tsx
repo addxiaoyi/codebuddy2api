@@ -288,7 +288,7 @@ export default function KeysPage() {
     <div className="flex flex-col gap-4 md:gap-6">
       {/* 分组：红包一次生成一批、额度零碎，与手工建的混在一起很难看。
           数字直接标在 tab 上，不用切过去才知道另一边有多少个。 */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as 'normal' | 'packet')}>
+      <Tabs id="keys-tabs" value={tab} onValueChange={(v) => setTab(v as 'normal' | 'packet')}>
         <TabsList className="rounded-full">
           <TabsTrigger value="normal" className="rounded-full">
             {t('keys.tabNormal')} · {normalKeys.length}
