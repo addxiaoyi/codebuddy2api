@@ -17,6 +17,12 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# SQLite 的 WAL / SHM 是运行产物：每次写入都变，且 WAL 里压着**尚未 check 进主库的
+# 明文行**（实测 WAL 2.1MB 而主库仅 4KB，等于把整库内容以最原始形态提交了一次）。
+# 它们由 SQLite 自己重建，不需要也不该进版本库。
+*.db-shm
+*.db-wal
+
 # 个人 / 敏感信息（绝不提交）
 *.token
 *.key
