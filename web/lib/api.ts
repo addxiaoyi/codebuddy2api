@@ -129,6 +129,25 @@ export const accountApi = {
       expected?: Realm;
       got?: Realm;
     }>('/api/auth/poll', {state, realm, region}),
+  /** 浏览器 OAuth 登录（国内版/国际版双版本）。version='cn' 或 'intl' */
+  oauthStart: (name: string = '', version: 'cn' | 'intl' = 'cn') =>
+    post<{id: string; url: string; expires_at: number; interval: number}>('/api/oauth/start', {name, version}),
+  /** 轮询 OAuth 登录结果 */
+  oauthPoll: (fid: string) =>
+    get<{
+      status: 'pending' | 'expired' | 'success' | 'invalid';
+      uid?: string;
+      nickname?: string;
+      updated?: boolean;
+      realm?: Realm;
+      accessToken?: string;
+      refreshToken?: string;
+      expires_at?: number;
+      domain?: string;
+    }>('/api/oauth/' + fid + '/poll'),
+  /** 取消 OAuth 登录流程 */
+  oauthCancel: (fid: string) =>
+    del<{status: string}>('/api/oauth/' + fid),
   remove: (file: string) => del<{success: boolean}>(`/api/accounts/${encodeURIComponent(file)}`),
   /** 临时禁用 / 启用账号（issue #21）：改文件名 + 触发上游重载。 */
   setDisabled: (file: string, disabled: boolean) =>

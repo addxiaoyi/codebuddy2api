@@ -833,6 +833,24 @@
     "stateLost": "Authorization is no longer valid (the server restarted while waiting). Please request a new one",
     "realmMismatch": "This QR code belongs to the other edition (CN / Global). Please request a new one"
   },
+  "oauth": {
+    "title": "Browser OAuth Authorization · {realm}",
+    "descCn": "Open the link below to authorize in a browser; phone-number sign-in works there too. The account is checked in and added automatically",
+    "descGlobal": "Open the link below to authorize in a browser; third-party sign-in such as Google works there. New accounts must pick a region first, otherwise chat returns 14017",
+    "nameLabel": "Account name (optional):",
+    "namePlaceholder": "e.g. my browser account",
+    "requesting": "Requesting authorization link…",
+    "waiting": "Waiting for authorization (complete login in a browser)…",
+    "success": "Account「{name}」authorized",
+    "successUpdated": "Account「{name}」authorized (updated)",
+    "successGlobal": "International edition account added to pool (no check-in, credits from one-time trial)",
+    "successToken": "Login token refreshed for this account, applying automatically",
+    "successCheckin": "Auto check-in completed, adding to pool",
+    "expired": "Authorization expired (timeout), please get a new link",
+    "copyLink": "Copy link",
+    "retry": "Get a new link",
+    "stateLost": "Authorization lost (server restarted while waiting), please get a new link"
+  },
   "region": {
     "HK": "Hong Kong SAR China",
     "MO": "Macao SAR China",

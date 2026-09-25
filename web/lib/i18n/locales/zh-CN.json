@@ -809,6 +809,24 @@
     "stateLost": "授权已失效（服务端在等待期间重启过），请重新获取",
     "realmMismatch": "这个二维码是另一个版本（国内 / 国际）的，请重新获取"
   },
+  "oauth": {
+    "title": "浏览器 OAuth 授权 · {realm}",
+    "descCn": "点开下方链接在浏览器里完成授权，支持手机号登录等方式。授权成功后会自动登录并纳管",
+    "descGlobal": "点开下方链接在浏览器里完成授权，可用 Google 等第三方账号登录。新号需先选地区完成注册，否则聊天会报 14017",
+    "nameLabel": "账号备注（可选）：",
+    "namePlaceholder": "例如：我的浏览器账号",
+    "requesting": "正在申请授权链接…",
+    "waiting": "等待授权完成（在浏览器里完成登录）…",
+    "success": "账号「{name}」授权成功",
+    "successUpdated": "账号「{name}」授权成功（已更新）",
+    "successGlobal": "国际版账号已加入账号池（国际版无签到，积分来自一次性 trial）",
+    "successToken": "已更新该账号的登录令牌，正在自动应用",
+    "successCheckin": "已自动完成签到，正在加入账号池",
+    "expired": "授权已失效（等待超时），请重新获取",
+    "copyLink": "复制链接",
+    "retry": "重新获取",
+    "stateLost": "授权已失效（服务端在等待期间重启过），请重新获取"
+  },
   "region": {
     "HK": "中国香港",
     "MO": "中国澳门",
