@@ -18,6 +18,10 @@ REQUEST_CREDENTIAL = ContextVar("pool_credential", default=None)
 CN = timezone(timedelta(hours=8))
 BILLING_CN = "https://www.codebuddy.cn/v2/billing/meter/"
 BILLING_INTL = os.environ.get("WORKBuddy_BILLING_INTL_URL", "https://api.workbuddy.ai/v2/billing/meter/")
+GROWTH_TASKS_URL = "https://copilot.tencent.com/activity/growth/tasks"
+GROWTH_TASKS_ACCEPT_URL = "https://copilot.tencent.com/activity/growth/tasks/accept"
+GROWTH_TASKS_CLAIM_BASE = "https://www.workbuddy.cn/activity/growth/tasks/"
+UNCOMPLETABLE_TASKS = {"Expert_Philanthropy"}
 
 
 def number(value):
@@ -284,6 +288,142 @@ class AccountPool:
                 message = "操作失败：请检查登录凭据或网络，必要时重新授权"
                 self.update(aid, last_error=message)
                 return {"id": aid, "ok": False, "message": message}
+
+    def _get_growth_headers(self, headers):
+        h = dict(headers)
+        h["User-Agent"] = "WorkBuddy/5.5.6 WorkBuddy/5.5.6 CLI/2.137.1"
+        return h
+
+    def growth_tasks(self, client, headers, version="cn"):
+        url = GROWTH_TASKS_URL
+        response = client.get(url, headers=headers)
+        if response.status_code not in (200, 299):
+            raise BillingError(f"成长任务查询失败（HTTP {response.status_code}）", response.status_code)
+        try:
+            d = response.json()
+        except ValueError:
+            raise BillingError("成长任务返回格式异常")
+        if not isinstance(d, dict):
+            raise BillingError("成长任务响应格式异常")
+        code = d.get("code")
+        if code is not None and code != 0:
+            raise BillingError(d.get("message", f"上游返回错误码 {code}"), code=code)
+        data = d.get("data", {})
+        tasks = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(tasks, list):
+            raise BillingError("成长任务数据格式异常")
+        result = []
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            tc = t.get("taskCode") or t.get("task_code") or ""
+            if tc in UNCOMPLETABLE_TASKS:
+                continue
+            result.append({
+                "code": tc,
+                "name": t.get("taskName") or t.get("title") or tc,
+                "progress": t.get("progress") or t.get("currentCount") or 0,
+                "target": t.get("target") or t.get("totalCount") or 1,
+                "reward": t.get("reward") or {},
+                "claimed": t.get("status") in ("claimed", "completed", 1, True),
+            })
+        return result
+
+    def growth_tasks_accept(self, client, headers, task_codes):
+        if not task_codes:
+            return {"accepted": []}
+        h = self._get_growth_headers(headers)
+        response = client.post(GROWTH_TASKS_ACCEPT_URL, headers=h, json={"task_codes": list(task_codes)})
+        if response.status_code not in (200, 299):
+            raise BillingError(f"领取任务失败（HTTP {response.status_code}）", response.status_code)
+        try:
+            d = response.json()
+        except ValueError:
+            raise BillingError("领取任务返回格式异常")
+        if not isinstance(d, dict):
+            raise BillingError("领取任务响应格式异常")
+        code = d.get("code")
+        if code is not None and code != 0:
+            raise BillingError(d.get("message", f"上游返回错误码 {code}"), code=code)
+        return d.get("data", {})
+
+    def growth_task_claim(self, client, headers, task_code):
+        url = GROWTH_TASKS_CLAIM_BASE + task_code
+        h = dict(headers)
+        h["x-client-platform"] = "web"
+        h["Origin"] = "https://www.workbuddy.cn"
+        response = client.post(url, headers=h, json={})
+        if response.status_code not in (200, 299, 404):
+            raise BillingError(f"领取奖励失败（HTTP {response.status_code}）", response.status_code)
+        if response.status_code == 404:
+            return {"claimed": False, "skipped": "任务不存在或已领取"}
+        try:
+            d = response.json()
+        except ValueError:
+            return {"claimed": response.status_code in (200, 299)}
+        if not isinstance(d, dict):
+            return {"claimed": False, "error": "响应格式异常"}
+        code = d.get("code")
+        if code is not None and code != 0:
+            return {"claimed": False, "error": d.get("message", f"错误码 {code}")}
+        return {"claimed": True}
+
+    def growth_complete(self, aid):
+        with self.operation_lock(aid):
+            item, previous = self.snapshot(aid)
+            if not item["enabled"]:
+                return {"id": aid, "ok": False, "message": "账号已暂停，未执行操作"}
+            manager = self.store.manager_for(aid, item)
+            try:
+                headers = manager.get_headers()
+                domain = str(headers.get("X-Domain", "")).lower()
+                version = "intl" if "workbuddy.ai" in domain or "copilot.workbuddy" in domain else "cn"
+                results = []
+                with self.client_factory() as client:
+                    tasks = self.growth_tasks(client, headers, version)
+                    if not tasks:
+                        return {"id": aid, "ok": True, "message": "暂无可完成的成长任务", "results": []}
+                    pending = [t for t in tasks if not t["claimed"]]
+                    skipped = [t for t in tasks if t["claimed"]]
+                    if not pending:
+                        return {"id": aid, "ok": True, "message": "所有成长任务已完成", "results": [{"code": t["code"], "name": t["name"], "skipped": "已完成"}, *skipped]}
+                    codes = [t["code"] for t in pending]
+                    try:
+                        self.growth_tasks_accept(client, headers, codes)
+                    except BillingError as e:
+                        results.append({"skipped": "领取失败", "error": str(e)})
+                        pass
+                    for t in pending:
+                        try:
+                            claim_result = self.growth_task_claim(client, headers, t["code"])
+                            results.append({"code": t["code"], "name": t["name"], **claim_result})
+                        except BillingError as e:
+                            results.append({"code": t["code"], "name": t["name"], "claimed": False, "error": str(e)})
+                    return {"id": aid, "ok": True, "message": f"完成 {len(results)} 个任务", "results": results}
+            except (BillingError, httpx.HTTPError, OSError, ValueError, RuntimeError, KeyError) as e:
+                self.update(aid, last_error=str(e))
+                if isinstance(e, BillingError) and e.status in (401, 403):
+                    self.update(aid, cooldown_until=self.clock() + 300)
+                return {"id": aid, "ok": False, "message": str(e)}
+
+    def growth_tasks_api(self, aid):
+        with self.operation_lock(aid):
+            item, previous = self.snapshot(aid)
+            if not item["enabled"]:
+                return {"id": aid, "ok": False, "message": "账号已暂停", "tasks": []}
+            manager = self.store.manager_for(aid, item)
+            try:
+                headers = manager.get_headers()
+                domain = str(headers.get("X-Domain", "")).lower()
+                version = "intl" if "workbuddy.ai" in domain or "copilot.workbuddy" in domain else "cn"
+                with self.client_factory() as client:
+                    tasks = self.growth_tasks(client, headers, version)
+                return {"id": aid, "ok": True, "tasks": tasks}
+            except (BillingError, httpx.HTTPError, OSError, ValueError, RuntimeError, KeyError) as e:
+                self.update(aid, last_error=str(e))
+                if isinstance(e, BillingError) and e.status in (401, 403):
+                    self.update(aid, cooldown_until=self.clock() + 300)
+                return {"id": aid, "ok": False, "message": str(e), "tasks": []}
 
     async def batch(self, action):
         if self.jobs.locked():

@@ -8,6 +8,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone as _tz
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -409,12 +410,55 @@ def create_app(root=None, auth_dir=None, initial_key=None, admin_key=None, secur
             keys = [{"id": kid, **{k: v for k, v in item.items() if k != "hash"}} for kid, item in store.data["keys"].items()]
             return {"accounts": pool.rows(store.account_rows()), "pool": dict(store.data["pool"]), "metrics": metrics.snapshot(), "keys": keys, "models": converter.get_available_models(), "uptime": int(time.time() - store.started), "events": list(store.events)}
 
+    @app.get("/admin/api/tasks")
+    async def tasks(req: Request):
+        store.require_admin(req)
+        with store.lock:
+            now_str = datetime.now(_tz.utc).strftime("%Y-%m-%d")
+            account_rows = pool.rows(store.account_rows())
+            tasks_list = []
+            for aid, item in store.data["accounts"].items():
+                status = store.data["account_status"].get(aid, {})
+                today_checked = status.get("checkin_date") == now_str
+                if not today_checked and item["enabled"]:
+                    tasks_list.append({
+                        "time": status.get("credits_updated", 0),
+                        "type": "签到",
+                        "account": item["name"],
+                        "status": "pending",
+                        "detail": "今日未签到",
+                        "duration_ms": 0,
+                        "action": aid,
+                    })
+            events = list(store.events)
+            for e in events:
+                tasks_list.append({
+                    "time": e["time"],
+                    "type": "测试",
+                    "account": e.get("model", "—"),
+                    "status": "success" if e["ok"] else "failed",
+                    "detail": e.get("model", ""),
+                    "duration_ms": int(e["seconds"] * 1000),
+                })
+            tasks_list.sort(key=lambda t: t["time"], reverse=True)
+            return {"tasks": tasks_list[:50], "total": len(tasks_list)}
+
     @app.post("/admin/api/accounts/{aid}/actions/{action}")
     async def account_action(aid: str, action: str, req: Request):
         store.require_admin(req)
         if action not in ("refresh", "status", "checkin"):
             raise HTTPException(404)
         return await asyncio.to_thread(pool.operate, aid, action)
+
+    @app.get("/admin/api/accounts/{aid}/growth-tasks")
+    async def growth_tasks_endpoint(aid: str, req: Request):
+        store.require_admin(req)
+        return await asyncio.to_thread(pool.growth_tasks_api, aid)
+
+    @app.post("/admin/api/accounts/{aid}/growth-tasks/complete")
+    async def growth_complete_endpoint(aid: str, req: Request):
+        store.require_admin(req)
+        return await asyncio.to_thread(pool.growth_complete, aid)
 
     @app.post("/admin/api/pool/actions/{action}")
     async def pool_action(action: str, req: Request):

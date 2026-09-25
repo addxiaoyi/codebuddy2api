@@ -111,6 +111,20 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.post("/admin/api/login", json={"key":"wrong"})).status_code, 401)
         self.assertEqual((await self.client.post("/admin/api/login", json={"key":ADMIN})).status_code, 429)
 
+    async def test_tasks_endpoint(self):
+        await self.login()
+        r = await self.client.get("/admin/api/tasks")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("tasks", data)
+        self.assertIn("total", data)
+        self.assertIsInstance(data["tasks"], list)
+        self.assertIsInstance(data["total"], int)
+
+    async def test_tasks_endpoint_unauthenticated(self):
+        r = await self.client.get("/admin/api/tasks")
+        self.assertEqual(r.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()
