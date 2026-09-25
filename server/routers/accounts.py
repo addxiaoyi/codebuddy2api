@@ -5,15 +5,24 @@ import asyncio
 import datetime
 import time
 
+import httpx
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from .. import config, db, security
 from ..services import (
-    credits as creditsvc, modelcatalog, reload, tasklog, taskrun, tencent, wb2api,
+    browser_login, credits as creditsvc, modelcatalog, reload, tasklog, taskrun, tencent, wb2api,
 )
 from ..services.realm import realm_of, supports_checkin
 
 router = APIRouter(prefix='/api', tags=['accounts'])
+
+# 浏览器 OAuth 登录（国际版/国内版），save_account 回调落盘到 AUTH_DIR
+_browser_login = browser_login.BrowserLogin(tencent.save_account)
+
+
+def _owner_of(user: dict) -> str:
+    """以用户 id 作为 owner 标识（flow 隔离）。"""
+    return str(user.get('sub') or user.get('username') or 'anonymous')
 
 
 def _today_start() -> int:
@@ -1233,3 +1242,58 @@ async def account_set_disabled(
                else ('；请手动重启上游以生效' if result.get('changed') else ''))
         ),
     }
+
+
+# ── 浏览器 OAuth 登录（cn / intl）───────────────────────────────
+# 支持国内版 (copilot.tencent.com) 与国际版 (copilot.workbuddy.ai)
+# 参考上游 admin/server.py 中的 oauth_start / oauth_poll / oauth_cancel
+
+@router.post('/oauth/start')
+async def oauth_start(
+    body: dict = Body(...),
+    user: dict = Depends(security.require_admin),
+) -> dict:
+    """发起浏览器 OAuth 授权。version='cn' 或 'intl'，决定国内版/国际版登录链接。
+
+    前端流程：
+      1. 用户选「国际版」 → POST {name: 'xxx', version: 'intl'}
+      2. 获得 {id, url, expires_at, interval} → 浏览器打开 url 扫码
+      3. 前端轮询 /oauth/{id}/poll 直到 status='success'
+
+    成功后 account 文件写入 auths/ 目录，自动触发上游 reload。
+    """
+    name = str(body.get('name') or '')
+    version = str(body.get('version') or 'cn')
+    if version not in ('cn', 'intl'):
+        raise HTTPException(400, 'version 必须是 cn 或 intl')
+    try:
+        return await _browser_login.start(_owner_of(user), name, version)
+    except (httpx.HTTPError, ValueError, TypeError):
+        raise HTTPException(502, '授权服务连接失败，请稍后重试')
+
+
+@router.post('/oauth/{fid}/poll')
+async def oauth_poll(fid: str, user: dict = Depends(security.require_admin)) -> dict:
+    """轮询 OAuth 授权结果。
+
+    返回:
+      {status: 'pending'}   - 等待用户扫码
+      {status: 'expired'}   - 二维码过期（5 分钟）
+      {status: 'success', uid, nickname, realm, ...} - 授权成功
+      {status: 'invalid'}   - 会话不存在（被取消或之前的轮询）
+    """
+    try:
+        return await _browser_login.poll(fid, _owner_of(user))
+    except (httpx.HTTPError, ValueError, TypeError):
+        raise HTTPException(502, '授权状态暂时无法获取，请稍后重试')
+
+
+@router.delete('/oauth/{fid}')
+async def oauth_cancel(fid: str, user: dict = Depends(security.require_admin)) -> dict:
+    """取消 OAuth 授权流程，释放资源。"""
+    try:
+        return await _browser_login.cancel(fid, _owner_of(user))
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {'status': 'cancelled', 'message': '会话已不存在'}

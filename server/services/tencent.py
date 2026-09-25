@@ -199,6 +199,38 @@ async def poll_login(state: str, realm: Realm | None = None) -> dict:
     }
 
 
+def save_account(doc: dict, name: str = '') -> dict:
+    """把 browser_login 的 doc 格式转换后落盘（兼容 OAuth 流程）。
+
+    browser_login 返回的 doc 结构：
+      {'account': {uid, enterpriseId, nickname}, 'auth': {accessToken, refreshToken,
+      domain, expiresAt}, 'version': 'cn'|'intl'}
+
+    write_auth_file 期望的扁平结构：
+      {uid, enterprise_id, nickname, access_token, refresh_token, expires_at,
+      domain, realm}
+
+    两者映射一次后调用 write_auth_file 写入，保留 device_token 等已有字段。
+    返回 (filename, existed) 与 write_auth_file 一致。
+    """
+    acct = doc.get('account') or {}
+    auth = doc.get('auth') or {}
+    version = str(doc.get('version') or '')
+    # 将 intl 归一化为我们内部用的 'global'（与 write_auth_file 里的 resolve_realm 口径一致）
+    realm = 'global' if version == 'intl' else 'cn'
+    expires_at = int(auth.get('expiresAt') or (int(time.time()) + 3600))
+    return write_auth_file({
+        'uid': str(acct.get('uid') or ''),
+        'enterprise_id': str(acct.get('enterpriseId') or ''),
+        'nickname': str(acct.get('nickname') or name or ''),
+        'access_token': str(auth.get('accessToken') or ''),
+        'refresh_token': str(auth.get('refreshToken') or ''),
+        'expires_at': expires_at,
+        'domain': str(auth.get('domain') or ''),
+        'realm': realm,
+    })
+
+
 def _atomic_write_json(target: Path, payload: dict) -> None:
     """把 payload 以**原子替换**方式写到 target（临时文件 + os.replace）。
 
